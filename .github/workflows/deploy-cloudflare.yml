@@ -80,5 +80,9 @@ jobs:
         run: |
           set +e
           sleep 5
-          curl -sS --max-time 20 "https://hypitapp.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev/healthz" || true
+          echo "== workers.dev =="
+          curl -sS --max-time 20 "https://hypitapp.goodluckjiachen.workers.dev/healthz" || true
+          echo
+          echo "== custom domain (hypitapp.luckydragon.us.ci) =="
+          curl -sS --max-time 20 "https://hypitapp.luckydragon.us.ci/healthz" || true
           echo

@@ -34,6 +34,12 @@ new_sqlite_classes = ["RateLimiterDO", "AccountLeaseDO"]
 # binding = "OBJECTS"
 # bucket_name = "hypitapp-objects"
 
+# ---- 自定义域名（国内可达；workers.dev 国内被墙）----
+# 绑定后控制面地址：https://hypitapp.luckydragon.us.ci
+[[routes]]
+pattern = "hypitapp.luckydragon.us.ci"
+custom_domain = true
+
 [vars]
 STORAGE_DRIVER = "cloudflare"
 MAX_DURATION_SECONDS = "180"
