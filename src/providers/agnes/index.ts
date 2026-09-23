@@ -20,8 +20,15 @@ import { postJson, getJson } from '../types.js';
 import type { Provider, TextGenerateInput, ImageGenerateInput, VideoGenerateInput, VideoGenerateResult, ChatMessage } from '../types.js';
 import type { ProviderCapabilities } from '../../types/index.js';
 
-/** Agnes Video 2.5 Flash 的单条时长上限（秒）。 */
+/** Agnes Video 单条时长上限（秒）。2.5-flash=12；v2.0 历史上限更高，保守仍用 12。 */
 const OFFICIAL_MAX_SECONDS_PER_SHOT = 12;
+
+/** 不同模型的 mode 枚举不同：2.5-flash 用 text/keyframe；v2.0 用 ti2vid/keyframes。 */
+function modeFor(model: string, useKeyframe: boolean): string {
+  const is25Flash = model.includes('2.5-flash');
+  if (useKeyframe) return is25Flash ? 'keyframe' : 'keyframes';
+  return is25Flash ? 'text' : 'ti2vid';
+}
 
 export class AgnesTextProvider implements Provider {
   readonly name = 'provider-agnes-text';
@@ -115,7 +122,7 @@ export class AgnesVideoProvider implements Provider {
     return withAccountFailover(this.pool, 'agnes-video', async ({ apiKey, baseUrl, modelName }) => {
       const base = baseUrl.replace(/\/$/, '');
       const origin = new URL(base).origin; // 轮询端点 /agnesapi 在 origin 下，不在 /v1 下
-      const model = modelName ?? 'agnes-video-2.5-flash';
+      const model = modelName ?? 'agnes-video-v2.0';
       const useKeyframe = Boolean(input.imageUrl);
 
       const submit = await postJson<{ video_id?: string; task_id?: string; id?: string }>(
@@ -123,7 +130,7 @@ export class AgnesVideoProvider implements Provider {
         {
           model,
           prompt: input.prompt,
-          mode: useKeyframe ? 'keyframe' : 'text',
+          mode: modeFor(model, useKeyframe),
           seconds: String(input.seconds),
           size: '720P',
           aspect_ratio: '16:9',
