@@ -8,7 +8,6 @@
  *    账户密钥由 Actions 侧从 Secrets 自行装载。
  */
 import { log } from '../core/logger.js';
-import { postJson } from '../providers/types.js';
 
 export interface DispatchConfig {
   pat: string;
@@ -26,9 +25,18 @@ export interface DispatchPayload {
 
 export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload): Promise<void> {
   const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/dispatches`;
-  await postJson(
-    url,
-    {
+  // 注意：/dispatches 成功返回 204 + 空 body，不能用会 JSON.parse 的 postJson（空串会抛错）
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${cfg.pat}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+      // GitHub API 强制要求 User-Agent，否则 403
+      'user-agent': 'hypitapp-control-plane',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
       event_type: cfg.eventType,
       // 注意：不要在此放 api key；仅放非敏感的任务描述
       client_payload: {
@@ -37,14 +45,10 @@ export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload
         maxDurationSeconds: payload.maxDurationSeconds,
         callbackUrl: cfg.callbackUrl,
       },
-    },
-    {
-      authorization: `Bearer ${cfg.pat}`,
-      accept: 'application/vnd.github+json',
-      'x-github-api-version': '2022-11-28',
-      // GitHub API 强制要求 User-Agent，否则 403（Workers 的 fetch 不会自动带）
-      'user-agent': 'hypitapp-control-plane',
-    },
-  );
+    }),
+  });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
+  }
   log.info('repository_dispatch sent', { owner: cfg.owner, repo: cfg.repo, eventType: cfg.eventType });
 }
