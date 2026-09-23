@@ -4,14 +4,17 @@
  * 覆盖三类能力（base_url = https://apihub.agnes-ai.com/v1）：
  *  - agnes-text   : OpenAI 兼容 /chat/completions，模型 agnes-3.0-flash
  *  - agnes-image  : /images/generations（同步返回 data[0].url），模型 agnes-image-2.5-flash
- *  - agnes-video  : /videos 创建 + /agnesapi 轮询（注意：不在 /v1 下），模型 agnes-video-2.5-flash
+ *  - agnes-video  : /videos 创建 + /agnesapi 轮询，模型 agnes-video-2.5-flash
  *
- * Agnes Video 2.5 Flash 关键约束（实测文档）：
- *  - seconds 为字符串 "4"–"12"（Flash 上限 12，非 18）
- *  - size 固定 "720P"（大写）
- *  - mode 必填：text / keyframe / reference
- *  - 图生视频用 first_frame（keyframe 模式），不是 image_url
- *  - 轮询：GET {origin}/agnesapi?video_id=<id>&model_name=<model>，完成取顶层 url
+ * ⚠️ 两代视频模型的接口不同，时长控制方式尤其关键：
+ *  - 2.5 系列（推荐，v2.0 将于 2026-09-25 下线）：`seconds`（字符串 "4"–"12"）、
+ *    `size:"720P"`、`aspect_ratio`、`mode: text|keyframe|reference`、keyframe 用 `first_frame`。
+ *  - v2.0（即将下线）：**没有 seconds**，时长由 `num_frames`(8n+1, ≤441) / `frame_rate` 决定
+ *    （`seconds = num_frames / frame_rate`，默认 121/24≈5.04s）；`mode: ti2vid|keyframes`；
+ *    单图用 `image`，多关键帧用 `extra_body.image[]`。
+ *
+ * 轮询：GET {origin}/agnesapi?video_id=<id>&model_name=<model>，完成取 url
+ * （v2.0 兼容旧版返回 `metadata.url`，故两者都读）。
  */
 import type { AccountPool } from '../../core/accountPool.js';
 import { withAccountFailover } from '../../core/retry.js';
@@ -20,14 +23,60 @@ import { postJson, getJson } from '../types.js';
 import type { Provider, TextGenerateInput, ImageGenerateInput, VideoGenerateInput, VideoGenerateResult, ChatMessage } from '../types.js';
 import type { ProviderCapabilities } from '../../types/index.js';
 
-/** Agnes Video 单条时长上限（秒）。2.5-flash=12；v2.0 历史上限更高，保守仍用 12。 */
+/** Agnes Video 单条时长上限（秒）。2.5-flash 上限 12；v2.0 可达 18（441/24）。保守取 12。 */
 const OFFICIAL_MAX_SECONDS_PER_SHOT = 12;
+const VIDEO_FPS = 24;
+const V20_MAX_FRAMES = 441; // v2.0 上限，且必须 8n+1
 
-/** 不同模型的 mode 枚举不同：2.5-flash 用 text/keyframe；v2.0 用 ti2vid/keyframes。 */
+/**
+ * 按目标秒数求 v2.0 的合法帧数：必须是 8n+1 且 ≤ 441（最接近目标）。
+ * 例：10s@24fps → desired 240 → n=30 → 241 帧（10.04s）。
+ */
+export function framesFor(seconds: number, fps = VIDEO_FPS, cap = V20_MAX_FRAMES): number {
+  const desired = Math.max(1, Math.round(seconds * fps));
+  let n = Math.round((desired - 1) / 8);
+  if (n < 0) n = 0;
+  if (8 * n + 1 > cap) n = Math.floor((cap - 1) / 8);
+  return 8 * n + 1;
+}
+
+/** 按模型家族选择正确 mode 枚举。 */
 function modeFor(model: string, useKeyframe: boolean): string {
-  const is25Flash = model.includes('2.5-flash');
-  if (useKeyframe) return is25Flash ? 'keyframe' : 'keyframes';
-  return is25Flash ? 'text' : 'ti2vid';
+  const is25 = model.includes('2.5');
+  if (useKeyframe) return is25 ? 'keyframe' : 'keyframes';
+  return is25 ? 'text' : 'ti2vid';
+}
+
+/**
+ * 组装创建任务 body —— 两代模型字段不同，这里集中处理，避免把 2.5 的字段误发给 v2.0
+ * （v2.0 忽略 seconds → 回落默认 121 帧 = 5.04s，这就是片长不一致的根因）。
+ */
+export function buildVideoBody(model: string, input: VideoGenerateInput): Record<string, unknown> {
+  const is25 = model.includes('2.5');
+  const useKeyframe = Boolean(input.imageUrl);
+  const base: Record<string, unknown> = {
+    model,
+    prompt: input.prompt,
+    mode: modeFor(model, useKeyframe),
+  };
+  if (is25) {
+    return {
+      ...base,
+      seconds: String(input.seconds),
+      size: '720P',
+      aspect_ratio: '16:9',
+      ...(useKeyframe ? { first_frame: input.imageUrl } : {}),
+    };
+  }
+  // v2.0：时长由 num_frames / frame_rate 决定；单图走 image
+  return {
+    ...base,
+    frame_rate: VIDEO_FPS,
+    num_frames: framesFor(input.seconds, VIDEO_FPS),
+    width: 1152,
+    height: 768,
+    ...(useKeyframe ? { image: input.imageUrl } : {}),
+  };
 }
 
 export class AgnesTextProvider implements Provider {
@@ -99,7 +148,7 @@ export class AgnesVideoProvider implements Provider {
   readonly name = 'provider-agnes-video';
   readonly capabilities: ProviderCapabilities = {
     apiType: 'agnes-video',
-    models: ['agnes-video-2.5-flash'],
+    models: ['agnes-video-2.5-flash', 'agnes-video-2.5', 'agnes-video-v2.0'],
     resolutions: ['720p'],
     maxSecondsPerShot: OFFICIAL_MAX_SECONDS_PER_SHOT,
     nativeAudio: true,
@@ -108,39 +157,37 @@ export class AgnesVideoProvider implements Provider {
   constructor(private pool: AccountPool) {}
 
   async generate(input: VideoGenerateInput): Promise<VideoGenerateResult> {
-    // 防御：不得超过 Flash 上限（12s）。调用方传更大值带原因拒绝。
+    // 防御：不得超过上限（12s，2.5-flash 与 v2.0 都满足）。调用方传更大值带原因拒绝。
     if (input.seconds > OFFICIAL_MAX_SECONDS_PER_SHOT) {
       throw new Error(
-        `agnes-video: requested ${input.seconds}s exceeds Flash cap ${OFFICIAL_MAX_SECONDS_PER_SHOT}s. ` +
-          'Agnes Video 2.5 Flash 单条上限 12 秒；请调小 maxShots 或 maxDurationSeconds。',
+        `agnes-video: requested ${input.seconds}s exceeds cap ${OFFICIAL_MAX_SECONDS_PER_SHOT}s. ` +
+          '请调小 maxShots 或 maxDurationSeconds。',
       );
     }
     if (input.resolution && input.resolution !== '720p') {
-      log.warn('agnes-video: Flash 仅支持 720P，强制 size=720P', { requested: input.resolution });
+      log.warn('agnes-video: 2.5 Flash 仅支持 720P，强制 size=720P', { requested: input.resolution });
     }
 
     return withAccountFailover(this.pool, 'agnes-video', async ({ apiKey, baseUrl, modelName }) => {
       const base = baseUrl.replace(/\/$/, '');
       const origin = new URL(base).origin; // 轮询端点 /agnesapi 在 origin 下，不在 /v1 下
-      const model = modelName ?? 'agnes-video-v2.0';
-      const useKeyframe = Boolean(input.imageUrl);
+      const model = modelName ?? 'agnes-video-2.5-flash';
+      const body = buildVideoBody(model, input);
 
       const submit = await postJson<{ video_id?: string; task_id?: string; id?: string }>(
         `${base}/videos`,
-        {
-          model,
-          prompt: input.prompt,
-          mode: modeFor(model, useKeyframe),
-          seconds: String(input.seconds),
-          size: '720P',
-          aspect_ratio: '16:9',
-          ...(useKeyframe ? { first_frame: input.imageUrl } : {}),
-        },
+        body,
         { authorization: `Bearer ${apiKey}` },
       );
       const videoId = submit.video_id ?? submit.task_id ?? submit.id;
       if (!videoId) throw new Error('agnes-video: 创建任务未返回 video_id');
-      log.info('agnes-video submitted', { videoId, model, mode: modeFor(model, useKeyframe), seconds: input.seconds });
+      log.info('agnes-video submitted', {
+        videoId,
+        model,
+        mode: body.mode,
+        seconds: input.seconds,
+        numFrames: body.num_frames,
+      });
 
       return await this.pollVideo(origin, apiKey, videoId, model, input.seconds);
     });
@@ -163,9 +210,9 @@ export class AgnesVideoProvider implements Provider {
     const deadline = Date.now() + 20 * 60_000;
     const query = `video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(model)}`;
     while (Date.now() < deadline) {
-      let r: { status?: string; url?: string; progress?: number; error?: unknown };
+      let r: { status?: string; url?: string; metadata?: { url?: string }; progress?: number; error?: unknown };
       try {
-        r = await getJson<{ status?: string; url?: string; progress?: number; error?: unknown }>(
+        r = await getJson<{ status?: string; url?: string; metadata?: { url?: string }; progress?: number; error?: unknown }>(
           `${origin}/agnesapi?${query}`,
           { authorization: `Bearer ${apiKey}` },
         );
@@ -178,8 +225,10 @@ export class AgnesVideoProvider implements Provider {
         await new Promise((res) => setTimeout(res, 15_000));
         continue;
       }
-      if (r.status === 'completed' && r.url) {
-        return { taskId: videoId, videoUrl: r.url, seconds };
+      // 2.5 系列返回顶层 url；v2.0 兼容旧版返回 metadata.url —— 两者都读
+      const url = r.url ?? r.metadata?.url;
+      if (r.status === 'completed' && url) {
+        return { taskId: videoId, videoUrl: url, seconds };
       }
       if (r.status === 'failed') {
         throw new Error(`agnes-video: 任务失败 videoId=${videoId} error=${String(r.error)}`);
