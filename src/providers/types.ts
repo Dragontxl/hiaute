@@ -54,7 +54,7 @@ export async function postJson<T>(
   url: string,
   body: unknown,
   headers: Record<string, string>,
-  timeoutMs = 120_000,
+  timeoutMs = 180_000,
 ): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -69,6 +69,10 @@ export async function postJson<T>(
       throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
     }
     return (await res.json()) as T;
+  } catch (err) {
+    // 超时被 abort：转成含 "timeout" 的错误，使上层 isRetryableError 判定为可重试并切换账户
+    if (controller.signal.aborted) throw new Error(`request timeout after ${timeoutMs}ms`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -87,6 +91,9 @@ export async function getJson<T>(
       throw new Error(`HTTP ${res.status}: ${await res.text().catch(() => '')}`);
     }
     return (await res.json()) as T;
+  } catch (err) {
+    if (controller.signal.aborted) throw new Error(`request timeout after ${timeoutMs}ms`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
