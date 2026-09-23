@@ -83,6 +83,6 @@ jobs:
           echo "== workers.dev =="
           curl -sS --max-time 20 "https://hypitapp.goodluckjiachen.workers.dev/healthz" || true
           echo
-          echo "== custom domain (hypitapp.luckydragon.us.ci) =="
-          curl -sS --max-time 20 "https://hypitapp.luckydragon.us.ci/healthz" || true
+          echo "== custom domain (hypitapp.ygtxl.dpdns.org) =="
+          curl -sS --max-time 20 "https://hypitapp.ygtxl.dpdns.org/healthz" || true
           echo
