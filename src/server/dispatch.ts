@@ -42,6 +42,8 @@ export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload
       authorization: `Bearer ${cfg.pat}`,
       accept: 'application/vnd.github+json',
       'x-github-api-version': '2022-11-28',
+      // GitHub API 强制要求 User-Agent，否则 403（Workers 的 fetch 不会自动带）
+      'user-agent': 'hypitapp-control-plane',
     },
   );
   log.info('repository_dispatch sent', { owner: cfg.owner, repo: cfg.repo, eventType: cfg.eventType });
