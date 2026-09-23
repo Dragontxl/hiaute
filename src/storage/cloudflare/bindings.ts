@@ -81,8 +81,8 @@ export interface DurableObjectStorageLike {
 export interface CloudflareEnv {
   /** D1：任务与账本。 */
   TASKS_DB: D1Database;
-  /** R2：产物对象。 */
-  OBJECTS: R2Bucket;
+  /** R2：产物对象。未绑定时 worker 退回内存对象存储（控制面路由不依赖 R2）。 */
+  OBJECTS?: R2Bucket;
   /** DO：限流（原子计数）。 */
   RATE_LIMITER: DurableObjectNamespace;
   /** DO：账户租约（串行抢占）。 */

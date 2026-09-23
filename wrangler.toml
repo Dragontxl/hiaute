@@ -1,0 +1,42 @@
+# Cloudflare Workers 部署配置（真实值，由 deploy-cloudflare.yml 使用）
+# 资源：D1 已建（hypitapp）；DO 由 migrations 创建；R2 暂未绑定（token 无 R2 编辑权限）。
+name = "hypitapp"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---- D1：任务与账本 ----
+[[d1_databases]]
+binding = "TASKS_DB"
+database_name = "hypitapp"
+database_id = "04ef6b0a-db27-4fd7-9194-65ce04a77cab"
+
+# ---- Durable Objects：限流 / 账户租约（强一致） ----
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[durable_objects.bindings]]
+name = "ACCOUNT_LEASES"
+class_name = "AccountLeaseDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["RateLimiterDO", "AccountLeaseDO"]
+
+# ---- R2：产物对象存储 ----
+# 当前 CF API Token 只有「Workers R2 存储:读取」权限，无法创建 bucket，故暂不绑定。
+# 控制面路由不使用 R2；worker 在缺省时会退回内存对象存储。
+# 取得 R2 编辑权限后：wrangler r2 bucket create hypitapp-objects，并取消下面注释。
+# [[r2_buckets]]
+# binding = "OBJECTS"
+# bucket_name = "hypitapp-objects"
+
+[vars]
+STORAGE_DRIVER = "cloudflare"
+MAX_DURATION_SECONDS = "180"
+MAX_SHOTS = "10"
+NORMALIZE_SIZE = "512"
+OUTPUT_RESOLUTION = "720p"
+# R2 公开前缀（绑定 R2 后再填）
+# R2_PUBLIC_URL = "https://objects.example.com"

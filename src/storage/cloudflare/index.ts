@@ -9,6 +9,7 @@
 import type { ApiType } from '../../types/index.js';
 import type { StorageBundle } from '../types.js';
 import type { CloudflareEnv } from './bindings.js';
+import { MemoryObjectStore } from '../memory.js';
 import { D1TaskRepository } from './tasks.js';
 import { R2ObjectStore } from './objects.js';
 import { DurableRateLimitBackend } from './rate.js';
@@ -20,7 +21,8 @@ export function createCloudflareStorage(env: CloudflareEnv, apiTypes: ApiType[] 
     tasks: new D1TaskRepository(env.TASKS_DB),
     rate: new DurableRateLimitBackend(env.RATE_LIMITER),
     leases: new DurableAccountLeaseStore(env.ACCOUNT_LEASES, apiTypes),
-    objects: new R2ObjectStore(env.OBJECTS, env.R2_PUBLIC_URL),
+    // R2 未绑定时退回内存对象存储（控制面路由不依赖 R2；产物由 GHA pipeline 本地生成）
+    objects: env.OBJECTS ? new R2ObjectStore(env.OBJECTS, env.R2_PUBLIC_URL) : new MemoryObjectStore(),
   };
 }
 

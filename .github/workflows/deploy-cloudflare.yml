@@ -1,0 +1,82 @@
+# 部署 Cloudflare 控制面（src/worker.ts：DO + D1 [+ R2]）
+#
+# 为什么在 GHA 上跑 wrangler：美国 runner 到 Cloudflare 网络干净，
+# 国内直连 wrangler/workers.dev 常不稳。
+#
+# 需要的 Secrets：
+#   CLOUDFLARE_API_TOKEN    CF API Token（需 Workers 脚本:编辑、D1:编辑；R2 编辑用于产物存储）
+#   CLOUDFLARE_ACCOUNT_ID   CF Account ID
+#   HYPITAPP_MASTER_KEY     与应用一致（用于账户库解密；控制面本身不装载账户，占位）
+#   HYPITAPP_CALLBACK_SECRET 与 hypit-task workflow 的同一 Secret（校验带签名回调）
+#   HYPITAPP_API_TOKEN      控制面 Bearer 鉴权令牌
+#   GITHUB_PAT / GITHUB_OWNER / GITHUB_REPO  控制面向 GitHub 发 repository_dispatch
+#
+# 触发：Actions → deploy-cloudflare → Run workflow（可选 dryRun）
+name: deploy-cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "只构建不部署"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # D1 建表（幂等：schema 用 CREATE TABLE IF NOT EXISTS）
+      - name: Apply D1 schema
+        run: npx --yes wrangler@3 d1 execute hypitapp --remote --file=src/storage/cloudflare/schema.sql
+
+      - name: Deploy worker
+        if: ${{ github.event.inputs.dryRun != 'true' }}
+        run: npx --yes wrangler@3 deploy
+
+      - name: Set worker secrets
+        if: ${{ github.event.inputs.dryRun != 'true' }}
+        env:
+          HYPITAPP_MASTER_KEY: ${{ secrets.HYPITAPP_MASTER_KEY }}
+          HYPITAPP_CALLBACK_SECRET: ${{ secrets.HYPITAPP_CALLBACK_SECRET }}
+          HYPITAPP_API_TOKEN: ${{ secrets.HYPITAPP_API_TOKEN }}
+          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
+          GITHUB_OWNER: ${{ secrets.GITHUB_OWNER }}
+          GITHUB_REPO: ${{ secrets.GITHUB_REPO }}
+        run: |
+          set -e
+          put() { printf '%s' "$2" | npx --yes wrangler@3 secret put "$1"; }
+          put HYPITAPP_MASTER_KEY "$HYPITAPP_MASTER_KEY"
+          put HYPITAPP_CALLBACK_SECRET "$HYPITAPP_CALLBACK_SECRET"
+          put HYPITAPP_API_TOKEN "$HYPITAPP_API_TOKEN"
+          put GITHUB_PAT "$GITHUB_PAT"
+          put GITHUB_OWNER "$GITHUB_OWNER"
+          put GITHUB_REPO "$GITHUB_REPO"
+
+      - name: Health check
+        if: ${{ github.event.inputs.dryRun != 'true' }}
+        run: |
+          set +e
+          sleep 5
+          curl -sS --max-time 20 "https://hypitapp.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev/healthz" || true
+          echo
