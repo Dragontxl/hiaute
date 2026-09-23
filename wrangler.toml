@@ -46,5 +46,7 @@ MAX_DURATION_SECONDS = "180"
 MAX_SHOTS = "10"
 NORMALIZE_SIZE = "512"
 OUTPUT_RESOLUTION = "720p"
+# 控制面自身的回调地址（派发给 GHA 的任务完成后回写状态）
+HYPITAPP_CALLBACK_URL = "https://hypitapp.luckydragon.us.ci/api/v1/callback/github"
 # R2 公开前缀（绑定 R2 后再填）
 # R2_PUBLIC_URL = "https://objects.example.com"
