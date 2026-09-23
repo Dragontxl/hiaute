@@ -44,7 +44,9 @@ body = json.dumps({"taskId": os.environ["TASK_ID"], "status": status}).encode()
 # 与控制面 core/crypto.ts 的 signPayload 对齐：sha256(`${secret}.${body}`)
 sig = hashlib.sha256(secret.encode() + b"." + body).hexdigest()
 req = urllib.request.Request(url, data=body, method="POST",
-    headers={"content-type": "application/json", "x-callback-signature": sig})
+    headers={"content-type": "application/json", "x-callback-signature": sig,
+             # Cloudflare Bot 防护会按签名拦截 Python-urllib 默认 UA（error 1010），必须用普通 UA
+             "user-agent": "hypitapp-pipeline/1.0"})
 try:
     resp = urllib.request.urlopen(req, timeout=30)
     print("callback sent:", status, "http", resp.status)
