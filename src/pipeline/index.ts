@@ -200,7 +200,7 @@ export class Pipeline {
       log.info('CROP_SHOTS skipped: no reference or no shots');
       return;
     }
-    if (!(await hasBin('ffmpeg'))) {
+    if (!(await resolveBin('ffmpeg'))) {
       log.warn('ffmpeg not found; CROP_SHOTS skipped');
       return;
     }
@@ -231,7 +231,7 @@ export class Pipeline {
       log.info('CONVERT_FRAMES skipped: no reference or no shots');
       return;
     }
-    if (!(await hasBin('ffmpeg'))) {
+    if (!(await resolveBin('ffmpeg'))) {
       log.warn('ffmpeg not found; CONVERT_FRAMES skipped');
       return;
     }
@@ -355,7 +355,7 @@ export class Pipeline {
     }
     const finalPath = join(dirs.outputs, 'final.mp4');
     try {
-      if (clips.length === 1 || !(await hasBin('ffmpeg'))) {
+      if (clips.length === 1 || !(await resolveBin('ffmpeg'))) {
         if (clips.length === 1) {
           await copyFile(clips[0]!, finalPath);
         } else {
@@ -410,38 +410,50 @@ function secs(v: number): string {
   return Number.isFinite(v) && v >= 0 ? v.toFixed(3) : '0.000';
 }
 
-/** ffmpeg 统一入口：错误输出进 stderr，非零退出抛错。 */
+/** 常见二进制的回退绝对路径（防止 runner 上 PATH 解析不到）。 */
+const BIN_FALLBACKS: Record<string, string[]> = {
+  ffmpeg: ['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/bin/ffmpeg'],
+  ffprobe: ['/usr/bin/ffprobe', '/usr/local/bin/ffprobe', '/bin/ffprobe'],
+};
+
+/** 解析可用的二进制路径（结果缓存）；找不到返回 null。 */
+const binCache = new Map<string, string | null>();
+
+async function resolveBin(bin: string): Promise<string | null> {
+  if (binCache.has(bin)) return binCache.get(bin) ?? null;
+  let found: string | null = null;
+  for (const candidate of [bin, ...(BIN_FALLBACKS[bin] ?? [])]) {
+    try {
+      await run(candidate, ['-version'], { timeout: 8_000 });
+      found = candidate;
+      break;
+    } catch (err) {
+      log.debug('resolveBin miss', { candidate, err: String(err).slice(0, 200) });
+    }
+  }
+  if (!found) log.warn('binary not found', { bin, tried: [bin, ...(BIN_FALLBACKS[bin] ?? [])] });
+  binCache.set(bin, found);
+  return found;
+}
+
+/** ffmpeg 统一入口：使用解析到的路径；错误输出进 stderr，非零退出抛错。 */
 async function ffmpeg(_taskId: string, args: string[]): Promise<string> {
-  const { stdout, stderr } = await run('ffmpeg', ['-hide_banner', '-loglevel', 'error', ...args], {
+  const bin = await resolveBin('ffmpeg');
+  if (!bin) throw new Error('ffmpeg not found');
+  const { stdout, stderr } = await run(bin, ['-hide_banner', '-loglevel', 'error', ...args], {
     timeout: 10 * 60_000,
     maxBuffer: 16 * 1024 * 1024,
   });
   return [stdout, stderr].filter(Boolean).join('\n');
 }
 
-const binCache = new Map<string, boolean>();
-
-/** 探测本机是否具备某个二进制（结果缓存）。 */
-async function hasBin(bin: string): Promise<boolean> {
-  const cached = binCache.get(bin);
-  if (cached !== undefined) return cached;
-  let ok = false;
-  try {
-    await run(bin, ['--version'], { timeout: 8_000 });
-    ok = true;
-  } catch {
-    ok = false;
-  }
-  binCache.set(bin, ok);
-  return ok;
-}
-
 /** ffprobe 实测时长（秒）；工具缺失或失败返回 undefined。 */
 async function probeSeconds(path: string): Promise<number | undefined> {
-  if (!(await hasBin('ffprobe'))) return undefined;
+  const bin = await resolveBin('ffprobe');
+  if (!bin) return undefined;
   try {
     const { stdout } = await run(
-      'ffprobe',
+      bin,
       ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', path],
       { timeout: 30_000 },
     );

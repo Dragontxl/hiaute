@@ -87,6 +87,9 @@ jobs:
           HYPIT_AGNES_1_KEY: ${{ secrets.HYPIT_AGNES_1_KEY }}
         run: |
           set +e
+          echo "== ffmpeg availability =="
+          which ffmpeg ffprobe || true
+          node -e "const{execFile}=require('node:child_process');execFile('ffmpeg',['-version'],(e,o)=>console.log('node execFile ffmpeg:',e?('ERR '+e.message):('OK '+(o||'').split('\n')[0])))"
           echo "== Gemini models (gemini-3.*) =="
           curl -sS --max-time 20 "https://generativelanguage.googleapis.com/v1beta/models?key=$HYPIT_GEMINI_MAIN_KEY" \
             | grep -oE '"name": *"models/gemini-3[^"]*"' | head -20

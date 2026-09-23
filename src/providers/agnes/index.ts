@@ -140,13 +140,19 @@ export class AgnesVideoProvider implements Provider {
       );
       const videoId = submit.video_id ?? submit.task_id ?? submit.id;
       if (!videoId) throw new Error('agnes-video: 创建任务未返回 video_id');
-      log.info('agnes-video submitted', { videoId, model, mode: useKeyframe ? 'keyframe' : 'text', seconds: input.seconds });
+      log.info('agnes-video submitted', { videoId, model, mode: modeFor(model, useKeyframe), seconds: input.seconds });
 
       return await this.pollVideo(origin, apiKey, videoId, model, input.seconds);
     });
   }
 
-  /** 轮询 GET {origin}/agnesapi?video_id=<id>&model_name=<model>，完成取顶层 url。 */
+  /**
+   * 轮询 GET {origin}/agnesapi?video_id=<id>&model_name=<model>，完成取顶层 url。
+   *
+   * 注意：轮询本身也有配额（"too many video status queries" 429）。轮询期间的
+   * 429/网络抖动**必须在本方法内消化**——若向上抛出，会被 withAccountFailover 当成
+   * 「本次调用失败」而**重新提交一个新视频任务**，既浪费配额又产生重复任务。
+   */
   private async pollVideo(
     origin: string,
     apiKey: string,
@@ -157,12 +163,21 @@ export class AgnesVideoProvider implements Provider {
     const deadline = Date.now() + 20 * 60_000;
     const query = `video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(model)}`;
     while (Date.now() < deadline) {
-      const r = await getJson<{
-        status?: string;
-        url?: string;
-        progress?: number;
-        error?: unknown;
-      }>(`${origin}/agnesapi?${query}`, { authorization: `Bearer ${apiKey}` });
+      let r: { status?: string; url?: string; progress?: number; error?: unknown };
+      try {
+        r = await getJson<{ status?: string; url?: string; progress?: number; error?: unknown }>(
+          `${origin}/agnesapi?${query}`,
+          { authorization: `Bearer ${apiKey}` },
+        );
+      } catch (err) {
+        // 轮询被限流/抖动：不重提任务，稍后继续查同一个 video_id
+        log.warn('agnes-video poll transient error; keep polling same task', {
+          videoId,
+          err: String(err).slice(0, 200),
+        });
+        await new Promise((res) => setTimeout(res, 15_000));
+        continue;
+      }
       if (r.status === 'completed' && r.url) {
         return { taskId: videoId, videoUrl: r.url, seconds };
       }
@@ -170,7 +185,8 @@ export class AgnesVideoProvider implements Provider {
         throw new Error(`agnes-video: 任务失败 videoId=${videoId} error=${String(r.error)}`);
       }
       log.debug('agnes-video polling', { videoId, status: r.status, progress: r.progress });
-      await new Promise((res) => setTimeout(res, 4000));
+      // 间隔放宽到 10s，避免触发「too many video status queries」限流
+      await new Promise((res) => setTimeout(res, 10_000));
     }
     throw new Error(`agnes-video: 轮询超时 videoId=${videoId}`);
   }
