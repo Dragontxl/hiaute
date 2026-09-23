@@ -94,22 +94,28 @@ export class AgnesTextProvider implements Provider {
     if (input.system) messages.push({ role: 'system', content: input.system });
     messages.push({ role: 'user', content: input.prompt });
 
-    return withAccountFailover(this.pool, 'agnes-text', async ({ apiKey, baseUrl, modelName }) => {
-      const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
-      const res = await postJson<{ choices: Array<{ message: { content: string } }> }>(
-        url,
-        {
-          model: modelName ?? 'agnes-3.0-flash',
-          messages,
-          max_tokens: input.maxTokens ?? 8192,
-          temperature: input.temperature ?? 0.4,
-        },
-        { authorization: `Bearer ${apiKey}` },
-      );
-      const content = res.choices?.[0]?.message?.content;
-      if (!content) throw new Error('agnes-text: empty completion');
-      return content;
-    });
+    return withAccountFailover(
+      this.pool,
+      'agnes-text',
+      async ({ apiKey, baseUrl, modelName }) => {
+        const url = `${baseUrl.replace(/\/$/, '')}/chat/completions`;
+        const res = await postJson<{ choices: Array<{ message: { content: string } }> }>(
+          url,
+          {
+            model: modelName ?? 'agnes-3.0-flash',
+            messages,
+            max_tokens: input.maxTokens ?? 8192,
+            temperature: input.temperature ?? 0.4,
+          },
+          { authorization: `Bearer ${apiKey}` },
+        );
+        const content = res.choices?.[0]?.message?.content;
+        if (!content) throw new Error('agnes-text: empty completion');
+        return content;
+      },
+      // 文本生成偶发变慢/挂起：收紧重试（3 轮、15s 起），避免长跑
+      { maxRounds: 3, baseMs: 15_000, capMs: 120_000 },
+    );
   }
 }
 
