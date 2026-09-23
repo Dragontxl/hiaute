@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hypitapp · 任务控制台</title>
+  <!--
+    依 V2 §7.4 的 L2 形态：前端为静态页（可放 Cloudflare Pages / GitHub Pages）。
+    这是一个最小可用的任务提交/查询界面；生产可替换为 React + AntD。
+    生成后编辑：任务列表每行「编辑」按钮调用 POST /api/v1/tasks/:id/studio，
+    成功后在新标签页打开 Hypit Studio（仅本地/常驻控制面形态可用）。
+  -->
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 24px; max-width: 960px; margin-inline: auto; }
+    h1 { font-size: 20px; }
+    .card { border: 1px solid #8884; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+    label { display: block; font-size: 13px; margin: 8px 0 4px; color: #888; }
+    input, select { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #8884; background: transparent; color: inherit; box-sizing: border-box; }
+    button { margin-top: 12px; padding: 8px 16px; border-radius: 6px; border: 0; background: #2563eb; color: #fff; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    button.link { background: transparent; color: #2563eb; padding: 2px 6px; margin: 0; text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #8883; }
+    .muted { color: #888; font-size: 12px; }
+    code { background: #8882; padding: 1px 4px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Hypitapp 任务控制台</h1>
+  <p class="muted">按 V2 方案：前端（本页）→ 控制面 API →（可选）GitHub Actions 算力 → 轮询状态 → 取回产物 → 生成后可在 Studio 二次编辑。</p>
+
+  <div class="card">
+    <strong>新建任务</strong>
+    <label>参考视频 URL（可选）</label>
+    <input id="ref" placeholder="https://.../reference.mp4" />
+    <label>单任务时长上限（秒，§8.4）</label>
+    <input id="dur" type="number" value="180" min="5" max="1800" />
+    <label>Agnes 输出档位（§8.4）</label>
+    <select id="res">
+      <option value="480p">480p</option>
+      <option value="720p" selected>720p</option>
+      <option value="1080p">1080p（更耗磁盘，慎用）</option>
+    </select>
+    <button id="submit">提交任务</button>
+  </div>
+
+  <div class="card">
+    <strong>任务列表</strong>
+    <table>
+      <thead><tr><th>ID</th><th>状态</th><th>阶段</th><th>时长上限</th><th>归一化</th><th>操作</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="6" class="muted">尚无任务</td></tr></tbody>
+    </table>
+    <p class="muted" style="margin-top:8px">控制面地址：<code id="apiBase"></code>（可用 <code>?api=</code> 覆盖）</p>
+    <p class="muted">「编辑」会启动 Hypit Studio 会话（仅本地直跑或常驻控制面形态可用；GitHub Actions 一次性 runner 不支持）。</p>
+  </div>
+
+  <script>
+    // 控制面 API 基址：默认同源；可用 ?api=https://your-worker.workers.dev 覆盖
+    // 鉴权令牌：?token=*** 写入 localStorage，之后免带；控制面未设 HYPITAPP_API_TOKEN 时留空即可
+    const params = new URLSearchParams(location.search);
+    const API = params.get('api') || '';
+    document.getElementById('apiBase').textContent = API || '(同源)';
+    const tokenFromUrl = params.get('token') || '';
+    if (tokenFromUrl) localStorage.setItem('hypitappToken', tokenFromUrl);
+    const TOKEN = tokenFromUrl || localStorage.getItem('hypitappToken') || '';
+
+    function apiHeaders(extra) {
+      const h = { ...(extra || {}) };
+      if (TOKEN) h['authorization'] = 'Bearer ' + TOKEN;
+      return h;
+    }
+
+    async function api(path, init) {
+      return fetch((API || '') + path, { ...(init || {}), headers: apiHeaders((init || {}).headers) });
+    }
+
+    async function refresh() {
+      try {
+        const res = await api('/api/v1/tasks');
+        const data = await res.json();
+        const rows = document.getElementById('rows');
+        if (!data.tasks || data.tasks.length === 0) {
+          rows.innerHTML = '<tr><td colspan="6" class="muted">尚无任务</td></tr>';
+          return;
+        }
+        rows.innerHTML = data.tasks.map((t) =>
+          `<tr>
+             <td>${t.id.slice(0, 8)}…</td>
+             <td>${t.status}</td>
+             <td>${t.stage}</td>
+             <td>${t.maxDurationSeconds}s</td>
+             <td>${t.normalizeSize}²</td>
+             <td><button class="link" data-edit="${t.id}">编辑</button></td>
+           </tr>`
+        ).join('');
+      } catch (e) {
+        console.warn('refresh failed', e);
+      }
+    }
+
+    async function openStudio(taskId, btn) {
+      btn.disabled = true;
+      try {
+        const res = await api('/api/v1/tasks/' + taskId + '/studio', { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || data.error || 'studio failed');
+        window.open(data.url, '_blank', 'noopener');
+      } catch (e) {
+        alert('启动编辑失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    document.getElementById('rows').addEventListener('click', (ev) => {
+      const btn = ev.target.closest('button[data-edit]');
+      if (btn) openStudio(btn.getAttribute('data-edit'), btn);
+    });
+
+    document.getElementById('submit').addEventListener('click', async () => {
+      const btn = document.getElementById('submit');
+      btn.disabled = true;
+      try {
+        const body = {
+          referenceUrl: document.getElementById('ref').value || undefined,
+          maxDurationSeconds: Number(document.getElementById('dur').value),
+          outputResolution: document.getElementById('res').value,
+        };
+        const res = await api('/api/v1/tasks', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        await refresh();
+      } catch (e) {
+        alert('提交失败：' + e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
+</body>
+</html>

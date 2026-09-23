@@ -1,0 +1,48 @@
+/**
+ * GitHub Actions 分发（依 V2 §7.1 / §7.3）
+ *
+ * 通过 repository_dispatch 触发 workflow，带上任务 payload。
+ * 安全要点：
+ *  - 使用 Fine-grained PAT（最小权限）或 GitHub App token，勿用高权限经典 PAT（§7.3）。
+ *  - 敏感值（API Key）不应放进 client_payload（不会被自动打码）；任务只传 taskId，
+ *    账户密钥由 Actions 侧从 Secrets 自行装载。
+ */
+import { log } from '../core/logger.js';
+import { postJson } from '../providers/types.js';
+
+export interface DispatchConfig {
+  pat: string;
+  owner: string;
+  repo: string;
+  eventType: string;
+  callbackUrl: string;
+}
+
+export interface DispatchPayload {
+  taskId: string;
+  referenceUrl: string;
+  maxDurationSeconds: number;
+}
+
+export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload): Promise<void> {
+  const url = `https://api.github.com/repos/${cfg.owner}/${cfg.repo}/dispatches`;
+  await postJson(
+    url,
+    {
+      event_type: cfg.eventType,
+      // 注意：不要在此放 api key；仅放非敏感的任务描述
+      client_payload: {
+        taskId: payload.taskId,
+        referenceUrl: payload.referenceUrl,
+        maxDurationSeconds: payload.maxDurationSeconds,
+        callbackUrl: cfg.callbackUrl,
+      },
+    },
+    {
+      authorization: `Bearer ${cfg.pat}`,
+      accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28',
+    },
+  );
+  log.info('repository_dispatch sent', { owner: cfg.owner, repo: cfg.repo, eventType: cfg.eventType });
+}

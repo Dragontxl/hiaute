@@ -1,0 +1,38 @@
+# 代码门禁：类型检查 + 单元测试 + 脚本语法检查
+# 与 hypit-task.yml（跑任务）分离，避免把 CI 塞进 6 小时的渲染 job。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck (src + tests)
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Shell syntax
+        run: |
+          bash -n docker/scripts/run-pipeline.sh
+          bash -n docker/scripts/monitor-disk.sh

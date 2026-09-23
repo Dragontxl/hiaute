@@ -1,0 +1,119 @@
+# 依 V2 §7.1 / §7.2 / §7.3 / §8.3 / §8.5
+# 触发：repository_dispatch（由控制面调用 GitHub /dispatches）
+#
+# 密钥约定（§7.3：密钥绝不进 client_payload，只从 Secrets 读）：
+#   账户密钥环境变量名 = HYPIT_<ALIAS>_KEY（ALIAS 来自 hypit.runtime.json，大写、非字母数字转 _）
+#   例：alias "gemini-main" -> HYPIT_GEMINI_MAIN_KEY
+#
+# 任务参数：TASK_ID / TASK_REFERENCE_URL / CALLBACK_URL 走 client_payload（均为非敏感）
+name: hypit-task
+
+on:
+  repository_dispatch:
+    types: [hypit-task]
+  workflow_dispatch:
+    inputs:
+      taskId: { required: false, type: string }
+      referenceUrl: { required: false, type: string }
+      callbackUrl: { required: false, type: string }
+      maxShots: { required: false, type: string, default: "2" }
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # 与 §7.2 的 6 小时硬约束对齐（顶格）
+    timeout-minutes: 360
+    env:
+      # 任务参数（非敏感，可由 client_payload 提供）
+      TASK_ID: ${{ github.event.client_payload.taskId || github.event.inputs.taskId || github.run_id }}
+      TASK_REFERENCE_URL: ${{ github.event.client_payload.referenceUrl || github.event.inputs.referenceUrl }}
+      CALLBACK_URL: ${{ github.event.client_payload.callbackUrl || github.event.inputs.callbackUrl }}
+      # §8.4 降档三件套（maxShots 可用 workflow_dispatch 输入覆盖）
+      MAX_DURATION_SECONDS: "180"
+      NORMALIZE_SIZE: "512"
+      MAX_SHOTS: ${{ github.event.inputs.maxShots || '10' }}
+      OUTPUT_RESOLUTION: "720p"
+      # 密钥：全部来自 Secrets，放在 job 级以便所有 step（含 run-pipeline）可见
+      HYPITAPP_MASTER_KEY: ${{ secrets.HYPITAPP_MASTER_KEY }}
+      HYPITAPP_CALLBACK_SECRET: ${{ secrets.HYPITAPP_CALLBACK_SECRET }}
+      HYPIT_GEMINI_MAIN_KEY: ${{ secrets.HYPIT_GEMINI_MAIN_KEY }}
+      HYPIT_GEMINI_BACKUP_KEY: ${{ secrets.HYPIT_GEMINI_BACKUP_KEY }}
+      HYPIT_AGNES_1_KEY: ${{ secrets.HYPIT_AGNES_1_KEY }}
+      HYPIT_AGNES_2_KEY: ${{ secrets.HYPIT_AGNES_2_KEY }}
+      HYPIT_AGNES_3_KEY: ${{ secrets.HYPIT_AGNES_3_KEY }}
+      HYPIT_AGNES_4_KEY: ${{ secrets.HYPIT_AGNES_4_KEY }}
+      HYPIT_AGNES_5_KEY: ${{ secrets.HYPIT_AGNES_5_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      # --- 模型缓存（§8.3：跨运行复用 4–6GB 模型，避免每次重下）---
+      - name: Restore model cache
+        uses: actions/cache@v4
+        with:
+          path: /opt/models
+          key: hypit-models-small-${{ runner.os }}-v1
+          restore-keys: |
+            hypit-models-small-${{ runner.os }}-
+
+      # --- 运行期配置：由 Secrets + 环境变量在进程内生成，不落盘明文 ---
+      - name: Prepare runtime
+        run: |
+          cp hypit.runtime.example.json hypit.runtime.json
+          node -e "const j=require('./hypit.runtime.json');const n=Object.values(j.endpoints||{}).reduce((s,e)=>s+((e.config&&e.config.accounts)||[]).length,0);if(!n)throw new Error('hypit.runtime.json has no accounts');console.log('runtime ready, accounts=',n)"
+
+      - name: Disk before
+        run: df -h; du -sh ~/.cache /opt/models 2>/dev/null || true
+
+      # --- 探针：先列出 Gemini/Agnes 可用模型，避免用错模型白跑一轮（低成本，不花钱）---
+      - name: Probe provider models
+        env:
+          HYPIT_GEMINI_MAIN_KEY: ${{ secrets.HYPIT_GEMINI_MAIN_KEY }}
+          HYPIT_AGNES_1_KEY: ${{ secrets.HYPIT_AGNES_1_KEY }}
+        run: |
+          set +e
+          echo "== Gemini models (gemini-3.*) =="
+          curl -sS --max-time 20 "https://generativelanguage.googleapis.com/v1beta/models?key=$HYPIT_GEMINI_MAIN_KEY" \
+            | grep -oE '"name": *"models/gemini-3[^"]*"' | head -20
+          echo "== Agnes chat ping (agnes-3.0-flash) =="
+          curl -sS --max-time 20 https://apihub.agnes-ai.com/v1/chat/completions \
+            -H "Authorization: Bearer $HYPIT_AGNES_1_KEY" -H "content-type: application/json" \
+            -d '{"model":"agnes-3.0-flash","messages":[{"role":"user","content":"ping"}],"max_tokens":5}' \
+            | head -c 400
+          echo
+
+      - name: Run pipeline
+        run: bash docker/scripts/run-pipeline.sh
+
+      # --- 磁盘监控归档（§8.5 ③：if: always() 保证失败也能取到）---
+      - name: Upload disk monitor
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: disk-monitor-${{ github.run_id }}
+          path: /tmp/disk_monitor.csv
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Upload outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: outputs-${{ github.run_id }}
+          path: |
+            data/**/script.svml
+            data/**/outputs/final.mp4
+            data/**/frames/*.jpg
+          retention-days: 7
+          if-no-files-found: ignore

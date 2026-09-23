@@ -1,0 +1,59 @@
+# Cloudflare Workers 部署配置示例（推荐方案：Durable Objects + D1 + R2，不用 KV）
+#
+# 用法：
+#   wrangler d1 create hypitapp
+#   wrangler r2 bucket create hypitapp-objects
+#   wrangler d1 execute hypitapp --file=src/storage/cloudflare/schema.sql
+#   wrangler deploy
+#
+# 迁移（Durable Objects）：
+#   首次部署新 DO 类时，wrangler 会提示创建 migration。
+#   v1 为初始版本；如后续新增 DO 类，追加 v2 并列出 new_classes。
+
+name = "hypitapp"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---- D1：任务与账本（关系型） ----
+[[d1_databases]]
+binding = "TASKS_DB"
+database_name = "hypitapp"
+database_id = "<在你的账号下 d1 create 后填入>"
+
+# ---- R2：产物对象（视频/图片/音频） ----
+[[r2_buckets]]
+binding = "OBJECTS"
+bucket_name = "hypitapp-objects"
+
+# ---- Durable Objects：强一致协调（限流 / 账户租约） ----
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[durable_objects.bindings]]
+name = "ACCOUNT_LEASES"
+class_name = "AccountLeaseDO"
+
+# DO 迁移（首次部署创建两个类）
+[[migrations]]
+tag = "v1"
+new_classes = ["RateLimiterDO", "AccountLeaseDO"]
+
+[vars]
+STORAGE_DRIVER = "cloudflare"
+# 降档策略（§8.4）
+MAX_DURATION_SECONDS = "180"
+MAX_SHOTS = "10"
+NORMALIZE_SIZE = "512"
+OUTPUT_RESOLUTION = "720p"
+# R2 公开前缀（如已绑定自定义域 / R2.dev）
+R2_PUBLIC_URL = "https://objects.example.com"
+
+# 密钥用 `wrangler secret put` 注入，勿写入本文件：
+#   wrangler secret put HYPITAPP_MASTER_KEY
+#   wrangler secret put HYPITAPP_CALLBACK_SECRET
+#   wrangler secret put HYPITAPP_API_TOKEN        # 留空则 /api/v1 不鉴权
+#   wrangler secret put GITHUB_PAT
+#   wrangler secret put GITHUB_OWNER / GITHUB_REPO
+#   （Provider 账户密钥见 hypit.runtime.json 的 store=platform 引用）
