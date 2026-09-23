@@ -13,6 +13,7 @@
  * 采用经典的 `fetch(request)` 处理协议，既可在 Workers 注册，也可单测。
  */
 import type { DurableObjectStorageLike } from './bindings.js';
+import { isAccountFaultError } from '../../core/retry.js';
 
 /* ============================ 协议类型 ============================ */
 
@@ -178,8 +179,11 @@ export class AccountLeaseDO {
   private async failure(req: LeaseMutateReq): Promise<{ ok: boolean; healthy: boolean }> {
     const s = req.accountId ? this.ensure(req.accountId) : { leasedUntil: null, consecutiveFailures: 0, healthy: true };
     s.leasedUntil = null;
-    s.consecutiveFailures += 1;
-    if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) s.healthy = false;
+    // 只有账户级故障（401/403/鉴权）才累计隔离；429/503/5xx/timeout 是临时错误，不隔离
+    if (req.accountId && isAccountFaultError(req.reason ?? '')) {
+      s.consecutiveFailures += 1;
+      if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) s.healthy = false;
+    }
     await this.persist();
     return { ok: true, healthy: s.healthy };
   }

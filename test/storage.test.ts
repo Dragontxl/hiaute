@@ -125,15 +125,28 @@ describe('MemoryAccountLeaseStore 租约与隔离', () => {
     assert.ok(again);
   });
 
-  it('连续失败 3 次被隔离，markSuccess 后恢复', async () => {
+  it('账户级故障（403）连续 3 次被隔离，markSuccess 后恢复', async () => {
     const s = store();
     const c = candidates[0]!;
     await s.acquire('agnes-video', [c], 100, 1_000);
-    for (let i = 0; i < 3; i++) await s.markFailure('agnes-video', c.id, `fail ${i}`);
+    for (let i = 0; i < 3; i++) await s.markFailure('agnes-video', c.id, 'HTTP 403 Forbidden');
     assert.equal((await s.snapshot()).find((x) => x.accountId === c.id)!.healthy, false);
     assert.equal(await s.acquire('agnes-video', [c], 100, 2_000), null);
     await s.markSuccess('agnes-video', c.id);
     assert.ok(await s.acquire('agnes-video', [c], 100, 3_000));
+  });
+
+  it('临时错误（503/429/timeout）不隔离账户', async () => {
+    const s = store();
+    const c = candidates[0]!;
+    await s.acquire('agnes-video', [c], 100, 1_000);
+    await s.markFailure('agnes-video', c.id, 'HTTP 503 Service Unavailable');
+    await s.markFailure('agnes-video', c.id, 'HTTP 429 Too Many Requests');
+    await s.markFailure('agnes-video', c.id, 'fetch failed timeout');
+    // 连续 3 次临时错误后账户仍健康、仍可租用
+    assert.equal((await s.snapshot()).find((x) => x.accountId === c.id)!.healthy, true);
+    assert.equal((await s.snapshot()).find((x) => x.accountId === c.id)!.consecutiveFailures, 0);
+    assert.ok(await s.acquire('agnes-video', [c], 100, 5_000));
   });
 
   it('全部候选被占用时返回 null', async () => {

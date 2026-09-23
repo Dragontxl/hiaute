@@ -6,7 +6,7 @@
     "gemini.vision": {
       "use": "@hypitapp/provider-gemini",
       "config": {
-        "modelName": "gemini-3.7-flash",
+        "modelName": "gemini-3.5-flash",
         "cooldown_seconds": 60,
         "accounts": [
           { "alias": "gemini-main",   "apiKey": { "store": "platform", "key": "gemini.api.1" }, "priority_weight": 100, "daily_limit": 1500, "max_concurrent": 1 },

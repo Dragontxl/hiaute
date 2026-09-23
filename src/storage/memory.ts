@@ -8,6 +8,7 @@
  * 差别仅在一致性由「进程单例」保证，而非 DO 的串行执行。
  */
 import { randomUUID } from 'node:crypto';
+import { isAccountFaultError } from '../core/retry.js';
 import { log } from '../core/logger.js';
 import { FsObjectStore } from './fs.js';
 import { emptyCheckpoint, mergeCheckpoints } from './merge.js';
@@ -161,8 +162,11 @@ export class MemoryAccountLeaseStore implements AccountLeaseStore {
   async markFailure(_apiType: ApiType, accountId: string, reason: string, _now = Date.now()): Promise<void> {
     const s = this.ensure(accountId);
     s.leasedUntil = null;
-    s.consecutiveFailures += 1;
-    if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) s.healthy = false;
+    // 只有账户级故障（401/403/鉴权）才累计隔离；429/503/5xx/timeout 是临时错误，不隔离
+    if (isAccountFaultError(reason)) {
+      s.consecutiveFailures += 1;
+      if (s.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) s.healthy = false;
+    }
     log.warn('lease failure (memory)', { accountId, reason, consecutiveFailures: s.consecutiveFailures, healthy: s.healthy });
   }
 

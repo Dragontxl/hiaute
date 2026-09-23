@@ -31,6 +31,22 @@ export function isRetryableError(err: unknown): boolean {
   return false;
 }
 
+/**
+ * 是否「账户本身坏了」的错误（应隔离该账户）。
+ * 401/403/PERMISSION_DENIED/unauthorized/invalid api key → 账户级故障，隔离；
+ * 429/5xx/timeout → 临时错误，账户没坏，只退避重试，不累计隔离计数。
+ */
+export function isAccountFaultError(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return (
+    msg.includes('403') ||
+    msg.includes('401') ||
+    msg.includes('permission_denied') ||
+    msg.includes('unauthorized') ||
+    msg.includes('invalid api key')
+  );
+}
+
 export interface BackoffOptions {
   /** 初始退避毫秒（默认 5000）。 */
   baseMs?: number;

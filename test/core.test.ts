@@ -110,15 +110,29 @@ describe('AccountPool', () => {
     await lease.release();
   });
 
-  it('连续失败 3 次后账户被隔离，acquire 返回 null', async () => {
+  it('账户级故障（403）连续 3 次后隔离，acquire 返回 null', async () => {
     const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video' })], MASTER, {
       leases: new MemoryAccountLeaseStore(),
     });
     const lease = await pool.acquire('agnes-video');
     assert.ok(lease);
-    for (let i = 0; i < 3; i++) await pool.markFailure('a1', `boom ${i}`);
+    for (let i = 0; i < 3; i++) await pool.markFailure('a1', 'HTTP 403 Forbidden');
     assert.equal(await pool.acquire('agnes-video'), null);
     await pool.markSuccess('a1');
+    assert.ok(await pool.acquire('agnes-video'));
+  });
+
+  it('临时错误（503/429）不隔离账户，可继续 acquire', async () => {
+    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video' })], MASTER, {
+      leases: new MemoryAccountLeaseStore(),
+    });
+    const lease = await pool.acquire('agnes-video');
+    assert.ok(lease);
+    await pool.markFailure('a1', 'HTTP 503 high demand');
+    await pool.markFailure('a1', 'HTTP 429 rate limit');
+    await pool.markFailure('a1', 'HTTP 503');
+    // 临时错误不累计隔离：release 后仍可 acquire
+    await lease!.release();
     assert.ok(await pool.acquire('agnes-video'));
   });
 

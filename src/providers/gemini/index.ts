@@ -80,47 +80,53 @@ export class GeminiProvider implements Provider {
     prompt: string;
     model?: string;
   }): Promise<VideoAnalysis> {
-    return withAccountFailover(this.pool, 'gemini', async ({ apiKey, baseUrl, modelName }) => {
-      const base = (baseUrl || DEFAULT_BASE).replace(/\/$/, '');
-      const model = modelName ?? input.model ?? 'gemini-3.7-flash';
-      const url = `${base}/models/${model}:generateContent`;
+    // Gemini 免费层每天仅 ~20 次：收紧重试（4 轮、15s 起），避免 503 过载时空转烧额度
+    return withAccountFailover(
+      this.pool,
+      'gemini',
+      async ({ apiKey, baseUrl, modelName }) => {
+        const base = (baseUrl || DEFAULT_BASE).replace(/\/$/, '');
+        const model = modelName ?? input.model ?? 'gemini-3.5-flash';
+        const url = `${base}/models/${model}:generateContent`;
 
-      const parts: GeminiPart[] = [{ text: input.prompt }];
-      if (input.bytes && input.bytes.byteLength > 0) {
-        if (input.bytes.byteLength > MAX_INLINE_BYTES) {
-          throw new Error(
-            `gemini: reference ${input.bytes.byteLength} bytes exceeds inline limit ${MAX_INLINE_BYTES}; ` +
-              '请压缩/裁剪参考视频，或改用 File API（未实现）',
-          );
+        const parts: GeminiPart[] = [{ text: input.prompt }];
+        if (input.bytes && input.bytes.byteLength > 0) {
+          if (input.bytes.byteLength > MAX_INLINE_BYTES) {
+            throw new Error(
+              `gemini: reference ${input.bytes.byteLength} bytes exceeds inline limit ${MAX_INLINE_BYTES}; ` +
+                '请压缩/裁剪参考视频，或改用 File API（未实现）',
+            );
+          }
+          parts.push({
+            inlineData: { mimeType: input.mimeType ?? 'video/mp4', data: Buffer.from(input.bytes).toString('base64') },
+          });
         }
-        parts.push({
-          inlineData: { mimeType: input.mimeType ?? 'video/mp4', data: Buffer.from(input.bytes).toString('base64') },
-        });
-      }
 
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          contents: [{ parts }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseSchema: ANALYSIS_SCHEMA,
-            temperature: 0.2,
-          },
-        }),
-      });
-      if (!res.ok) {
-        const detail = await res.text().catch(() => '');
-        throw new Error(`HTTP ${res.status} ${detail.slice(0, 500)}`);
-      }
-      const json = (await res.json()) as GeminiResponse;
-      const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
-      if (!text) throw new Error('gemini: empty analysis');
-      const parsed = JSON.parse(text) as VideoAnalysis;
-      if (!Array.isArray(parsed.shots)) throw new Error('gemini: analysis missing shots array');
-      log.info('gemini analysis ok', { model, shots: parsed.shots.length });
-      return parsed;
-    });
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+          body: JSON.stringify({
+            contents: [{ parts }],
+            generationConfig: {
+              responseMimeType: 'application/json',
+              responseSchema: ANALYSIS_SCHEMA,
+              temperature: 0.2,
+            },
+          }),
+        });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => '');
+          throw new Error(`HTTP ${res.status} ${detail.slice(0, 500)}`);
+        }
+        const json = (await res.json()) as GeminiResponse;
+        const text = json.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+        if (!text) throw new Error('gemini: empty analysis');
+        const parsed = JSON.parse(text) as VideoAnalysis;
+        if (!Array.isArray(parsed.shots)) throw new Error('gemini: analysis missing shots array');
+        log.info('gemini analysis ok', { model, shots: parsed.shots.length });
+        return parsed;
+      },
+      { maxRounds: 4, baseMs: 15_000, capMs: 120_000 },
+    );
   }
 }
