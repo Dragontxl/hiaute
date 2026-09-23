@@ -9,7 +9,9 @@
 #   HYPITAPP_MASTER_KEY     与应用一致（用于账户库解密；控制面本身不装载账户，占位）
 #   HYPITAPP_CALLBACK_SECRET 与 hypit-task workflow 的同一 Secret（校验带签名回调）
 #   HYPITAPP_API_TOKEN      控制面 Bearer 鉴权令牌
-#   GITHUB_PAT / GITHUB_OWNER / GITHUB_REPO  控制面向 GitHub 发 repository_dispatch
+#   DISPATCH_PAT / DISPATCH_OWNER / DISPATCH_REPO  控制面向 GitHub 发 repository_dispatch
+#                           （GitHub 禁止 secret 名以 GITHUB_ 开头，故此处用 DISPATCH_*，
+#                            部署时再以 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO 写入 worker secret）
 #
 # 触发：Actions → deploy-cloudflare → Run workflow（可选 dryRun）
 name: deploy-cloudflare
@@ -60,18 +62,18 @@ jobs:
           HYPITAPP_MASTER_KEY: ${{ secrets.HYPITAPP_MASTER_KEY }}
           HYPITAPP_CALLBACK_SECRET: ${{ secrets.HYPITAPP_CALLBACK_SECRET }}
           HYPITAPP_API_TOKEN: ${{ secrets.HYPITAPP_API_TOKEN }}
-          GITHUB_PAT: ${{ secrets.GITHUB_PAT }}
-          GITHUB_OWNER: ${{ secrets.GITHUB_OWNER }}
-          GITHUB_REPO: ${{ secrets.GITHUB_REPO }}
+          DISPATCH_PAT: ${{ secrets.DISPATCH_PAT }}
+          DISPATCH_OWNER: ${{ secrets.DISPATCH_OWNER }}
+          DISPATCH_REPO: ${{ secrets.DISPATCH_REPO }}
         run: |
           set -e
           put() { printf '%s' "$2" | npx --yes wrangler@3 secret put "$1"; }
           put HYPITAPP_MASTER_KEY "$HYPITAPP_MASTER_KEY"
           put HYPITAPP_CALLBACK_SECRET "$HYPITAPP_CALLBACK_SECRET"
           put HYPITAPP_API_TOKEN "$HYPITAPP_API_TOKEN"
-          put GITHUB_PAT "$GITHUB_PAT"
-          put GITHUB_OWNER "$GITHUB_OWNER"
-          put GITHUB_REPO "$GITHUB_REPO"
+          put GITHUB_PAT "$DISPATCH_PAT"
+          put GITHUB_OWNER "$DISPATCH_OWNER"
+          put GITHUB_REPO "$DISPATCH_REPO"
 
       - name: Health check
         if: ${{ github.event.inputs.dryRun != 'true' }}
