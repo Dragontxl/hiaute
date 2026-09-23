@@ -265,8 +265,10 @@ export class Pipeline {
   private async generateShots(ctx: PipelineContext, dirs: PipelineDirs, art: Artifacts): Promise<void> {
     const analysis = art.analysis;
     const cap = ctx.providers.agnesVideo.capabilities.maxSecondsPerShot ?? 12;
-    // 目标总时长：优先对齐参考视频实际时长，再受 maxDurationSeconds 兜底
-    const targetSeconds = Math.min(art.referenceSeconds ?? ctx.maxDurationSeconds, ctx.maxDurationSeconds);
+    // 目标总时长：优先对齐参考视频实际时长；自由创作/时长未知时保守取 maxShots*cap
+    // （避免无参考时长时回落成 maxDurationSeconds=180 → 分镜数暴涨 → 成本失控）
+    const freeformTarget = ctx.maxShots * cap;
+    const targetSeconds = Math.min(art.referenceSeconds ?? freeformTarget, ctx.maxDurationSeconds);
     const durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: ctx.maxShots });
 
     // 先落盘脚本再校验：SVML 是「生成后编辑」的入口（§5 必要条件 3）

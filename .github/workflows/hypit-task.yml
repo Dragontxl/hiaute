@@ -58,6 +58,10 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      # ffmpeg/ffprobe：裁切/抽帧/合成 + referenceSeconds 实测都需要（runner 默认未装）
+      - name: Install ffmpeg
+        run: sudo apt-get update -y && sudo apt-get install -y ffmpeg
+
       # --- 模型缓存（§8.3：跨运行复用 4–6GB 模型，避免每次重下）---
       - name: Restore model cache
         uses: actions/cache@v4
