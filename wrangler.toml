@@ -20,9 +20,11 @@ class_name = "RateLimiterDO"
 name = "ACCOUNT_LEASES"
 class_name = "AccountLeaseDO"
 
+# free plan 的 Durable Objects 必须用 SQLite 存储（new_sqlite_classes）。
+# 注意：tag 已发布过就不要改这行——DO 迁移是增量的；这里 v1 尚未成功发布，直接修正即可。
 [[migrations]]
 tag = "v1"
-new_classes = ["RateLimiterDO", "AccountLeaseDO"]
+new_sqlite_classes = ["RateLimiterDO", "AccountLeaseDO"]
 
 # ---- R2：产物对象存储 ----
 # 当前 CF API Token 只有「Workers R2 存储:读取」权限，无法创建 bucket，故暂不绑定。

@@ -35,10 +35,10 @@ class_name = "RateLimiterDO"
 name = "ACCOUNT_LEASES"
 class_name = "AccountLeaseDO"
 
-# DO 迁移（首次部署创建两个类）
+# DO 迁移（首次部署创建两个类）；free plan 的 DO 必须用 SQLite 存储 → new_sqlite_classes
 [[migrations]]
 tag = "v1"
-new_classes = ["RateLimiterDO", "AccountLeaseDO"]
+new_sqlite_classes = ["RateLimiterDO", "AccountLeaseDO"]
 
 [vars]
 STORAGE_DRIVER = "cloudflare"
