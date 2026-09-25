@@ -12,8 +12,13 @@ const htmlPath = path.join(__dirname, '..', 'frontend', 'index.html');
 const workerPath = path.join(__dirname, '..', 'src', 'worker.ts');
 
 const html = fs.readFileSync(htmlPath, 'utf-8');
-// 转义反引号和 ${（模板字符串内的 JS 代码需要转义这两个）
-const escaped = html.replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+// 先转义反斜杠，再转义反引号和 ${。
+// 顺序很关键：若不先转义 `\`，HTML 内 JS 的 `\n`、正则 `\d` 等会被外层模板字符串
+// 提前解释（`\n` 变成真实换行 → 浏览器里字符串字面量未闭合 → 整个脚本语法错误）。
+const escaped = html
+  .replace(/\\/g, '\\\\')
+  .replace(/`/g, '\\`')
+  .replace(/\$\{/g, '\\${');
 const replacement = 'const FRONTEND_HTML = `' + escaped + '`;';
 
 const worker = fs.readFileSync(workerPath, 'utf-8');

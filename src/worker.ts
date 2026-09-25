@@ -329,7 +329,7 @@ const FRONTEND_HTML = `<!doctype html>
         await refresh();
         // dispatch 未配置时任务会停在 PENDING，明确提示用户去配置或点“重试”
         if (created && created.status === 'PENDING') {
-          alert('任务已创建（' + (created.name || created.id.slice(0,8)) + '），但当前未配置 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO，\n未自动派发到 GitHub Actions，任务将保持“待处理”。\n\n配置后可在列表中点击“重试”重新派发。');
+          alert('任务已创建（' + (created.name || created.id.slice(0,8)) + '），但当前未配置 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO，\\n未自动派发到 GitHub Actions，任务将保持“待处理”。\\n\\n配置后可在列表中点击“重试”重新派发。');
         }
       } catch (e) {
         alert('提交失败：' + e.message);
@@ -915,6 +915,8 @@ const FRONTEND_HTML = `<!doctype html>
 
 
 
+
+
 /** 平台账户密钥下挂的 apiType（与 hypit.runtime.json 对齐）。 */
 const API_TYPES: ApiType[] = ['gemini', 'agnes-text', 'agnes-image', 'agnes-video', 'edgetts'];
 
@@ -976,7 +978,7 @@ export default {
     if (request.method === 'GET' && request.url.endsWith('/')) {
       return new Response(FRONTEND_HTML, {
         status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8', ...corsHeaders },
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...corsHeaders },
       });
     }
 
