@@ -21,6 +21,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { dispatchTask } from '../dispatch.js';
+import { buildFileRoutes } from './files.js';
 import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
@@ -37,6 +38,7 @@ function buildSchemas(cfg: AppConfig) {
   // 上限即 cfg 的值：单任务请求不得放大系统级降档策略（§8.4）
   const createTask = z
     .object({
+      name: z.string().max(128),
       referenceUrl: z.string().url().max(2048),
       brief: z.string().max(4000),
       maxDurationSeconds: z.number().int().min(1).max(cfg.maxDurationSeconds),
@@ -90,6 +92,36 @@ function reject(c: Context, p: { error: string; detail: string }) {
   return c.json({ error: p.error, detail: p.detail }, 400);
 }
 
+/**
+ * 分发任务到 GitHub Actions（幂等重放安全）。
+ *
+ * 返回：
+ *  - 'skipped'：未配置 GITHUB_PAT/OWNER/REPO，任务保持 PENDING（由重试端点稍后重放）
+ *  - 'ok'     ：已派发，任务置 DISPATCHED
+ *  - 'failed' ：派发失败，任务置 FAILED 并记录错误
+ */
+async function tryDispatch(
+  cfg: AppConfig,
+  storage: StorageBundle,
+  taskId: string,
+  referenceUrl: string,
+  maxDurationSeconds: number,
+): Promise<'skipped' | 'ok' | 'failed'> {
+  if (!cfg.github) {
+    log.warn('github dispatch skipped: GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO not configured', { taskId });
+    return 'skipped';
+  }
+  try {
+    await dispatchTask(cfg.github, { taskId, referenceUrl, maxDurationSeconds });
+    await storage.tasks.markStatus(taskId, 'DISPATCHED');
+    return 'ok';
+  } catch (err) {
+    log.error('dispatch failed', { taskId, err: String(err) });
+    await storage.tasks.markStatus(taskId, 'FAILED', String(err));
+    return 'failed';
+  }
+}
+
 /* ---------------- 鉴权 ---------------- */
 
 function bearerAuth(cfg: AppConfig): MiddlewareHandler {
@@ -112,7 +144,16 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
   const schemas = buildSchemas(cfg);
   const app = new Hono();
 
-  app.get('/healthz', (c) => c.json({ ok: true, driver: storage.driver, auth: cfg.apiToken ? 'enabled' : 'disabled', ts: Date.now() }));
+  app.get('/healthz', (c) =>
+    c.json({
+      ok: true,
+      driver: storage.driver,
+      auth: cfg.apiToken ? 'enabled' : 'disabled',
+      // dispatch=disabled 时新建任务将保持 PENDING（未配置 GITHUB_PAT/OWNER/REPO）
+      dispatch: cfg.github ? 'enabled' : 'disabled',
+      ts: Date.now(),
+    }),
+  );
 
   /**
    * Actions 回调：校验签名后更新状态（§7.3 带签名回调闭环）。
@@ -148,28 +189,20 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     if (!body.ok) return reject(c, body);
     const b = body.data;
     const task = await storage.tasks.create({
+      ...(b.name ? { name: b.name } : {}),
       ...(b.referenceUrl ? { referenceUrl: b.referenceUrl } : {}),
       ...(b.runFile ? { runFile: b.runFile } : {}),
       maxDurationSeconds: b.maxDurationSeconds ?? cfg.maxDurationSeconds,
       normalizeSize: cfg.normalizeSize,
       outputResolution: b.outputResolution ?? cfg.outputResolution,
     });
-    // 若配置了 GHA，则分发
-    if (cfg.github) {
-      try {
-        await dispatchTask(cfg.github, {
-          taskId: task.id,
-          referenceUrl: task.referenceUrl ?? '',
-          maxDurationSeconds: task.maxDurationSeconds,
-        });
-        await storage.tasks.markStatus(task.id, 'DISPATCHED');
-      } catch (err) {
-        log.error('dispatch failed', { taskId: task.id, err: String(err) });
-        await storage.tasks.markStatus(task.id, 'FAILED', String(err));
-        return c.json({ error: 'dispatch failed', detail: String(err) }, 502);
-      }
+    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds);
+    const created = await storage.tasks.get(task.id);
+    // 派发失败：与旧行为一致返回 502，便于前端明确感知
+    if (created?.status === 'FAILED' && created.error) {
+      return c.json({ error: 'dispatch failed', detail: created.error }, 502);
     }
-    return c.json(await storage.tasks.get(task.id), 201);
+    return c.json(created, 201);
   });
 
   api.get('/tasks', async (c) => c.json({ tasks: await storage.tasks.list() }));
@@ -178,6 +211,31 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     const t = await storage.tasks.get(c.req.param('id'));
     if (!t) return c.json({ error: 'not found' }, 404);
     return c.json(t);
+  });
+
+  /**
+   * 任务重试：对 PENDING/FAILED/PAUSED 任务重新分发到 GitHub Actions。
+   * 典型场景：任务创建时未配置 GITHUB_PAT/OWNER/REPO 导致 dispatch 被跳过而永远停在 PENDING，
+   * 配置补齐后由此端点重放分发。终态 COMPLETED/DISPATCHED/RUNNING 不可重试。
+   */
+  api.post('/tasks/:id', async (c) => {
+    const id = c.req.param('id');
+    const t = await storage.tasks.get(id);
+    if (!t) return c.json({ error: 'not found' }, 404);
+    if (t.status !== 'PENDING' && t.status !== 'FAILED' && t.status !== 'PAUSED') {
+      return c.json({ error: 'not retryable', detail: `status ${t.status} 不支持重试（仅 PENDING/FAILED/PAUSED）` }, 409);
+    }
+    const r = await tryDispatch(cfg, storage, id, t.referenceUrl ?? '', t.maxDurationSeconds);
+    if (r === 'skipped') {
+      return c.json(
+        { error: 'dispatch unavailable', detail: '未配置 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO，无法派发（请先配置 worker secret）' },
+        503,
+      );
+    }
+    if (r === 'failed') {
+      return c.json({ error: 'dispatch failed', detail: (await storage.tasks.get(id))?.error ?? '' }, 502);
+    }
+    return c.json(await storage.tasks.get(id));
   });
 
   /**
@@ -223,6 +281,9 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     const stopped = await studio.stop(body.data.runFile);
     return c.json({ stopped });
   });
+
+  /** 文件管理路由（上传/下载/列举/删除/预览）。 */
+  api.route('/files', buildFileRoutes(storage));
 
   app.route('/api/v1', api);
 

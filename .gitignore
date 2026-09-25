@@ -27,6 +27,12 @@ frames/
 # 本地资料/密钥说明（含 API key / 令牌 / PAT，绝不入库）
 docs/
 
+# 从 Actions artifact 下回来的产物
+downloads/
+
+# README 不上传（用户已从仓库删除；此文件仅保留在本地）
+README.md
+
 # 编辑器
 .vscode/
 .idea/

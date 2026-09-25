@@ -1,5 +1,7 @@
 # Cloudflare Workers 部署配置（真实值，由 deploy-cloudflare.yml 使用）
-# 资源：D1 已建（hypitapp）；DO 由 migrations 创建；R2 暂未绑定（token 无 R2 编辑权限）。
+# 资源：D1 已建（hypitapp）；DO 由 migrations 创建；R2 已绑定（hypitapp-objects）。
+# 控制面地址：https://hypitapp.ygtxl.dpdns.org
+account_id = "d30bed2763a23cf8eddf343ca192c5ff"
 name = "hypitapp"
 main = "src/worker.ts"
 compatibility_date = "2025-01-01"
@@ -27,12 +29,9 @@ tag = "v1"
 new_sqlite_classes = ["RateLimiterDO", "AccountLeaseDO"]
 
 # ---- R2：产物对象存储 ----
-# 当前 CF API Token 只有「Workers R2 存储:读取」权限，无法创建 bucket，故暂不绑定。
-# 控制面路由不使用 R2；worker 在缺省时会退回内存对象存储。
-# 取得 R2 编辑权限后：wrangler r2 bucket create hypitapp-objects，并取消下面注释。
-# [[r2_buckets]]
-# binding = "OBJECTS"
-# bucket_name = "hypitapp-objects"
+[[r2_buckets]]
+binding = "OBJECTS"
+bucket_name = "hypitapp-objects"
 
 # ---- 自定义域名（国内可达；workers.dev 国内被墙）----
 # 控制面地址：https://hypitapp.ygtxl.dpdns.org
@@ -47,6 +46,7 @@ MAX_SHOTS = "10"
 NORMALIZE_SIZE = "512"
 OUTPUT_RESOLUTION = "720p"
 # 控制面自身的回调地址（派发给 GHA 的任务完成后回写状态）
-HYPITAPP_CALLBACK_URL = "https://hypitapp.ygtxl.dpdns.org/api/v1/callback/github"
+# 部署后通过 CF Dashboard → Variables 设置 HYPITAPP_MASTER_KEY 和 HYPITAPP_CALLBACK_SECRET
+HYPITAPP_CALLBACK_URL = "https://hypitapp.goodluckjiachen.workers.dev/api/v1/callback/github"
 # R2 公开前缀（绑定 R2 后再填）
 # R2_PUBLIC_URL = "https://objects.example.com"

@@ -12,11 +12,16 @@ import { isAccountFaultError } from '../core/retry.js';
 import { log } from '../core/logger.js';
 import { FsObjectStore } from './fs.js';
 import { emptyCheckpoint, mergeCheckpoints } from './merge.js';
+import { formatTaskName } from './taskName.js';
 import type { ApiType, Stage, TaskCheckpoint, TaskRecord, TaskStatus } from '../types/index.js';
 import type {
   AccountLeaseStore,
   LeaseCandidate,
   LeaseGrant,
+  ListOptions,
+  ListResult,
+  ObjectBody,
+  ObjectMeta,
   ObjectStore,
   RateLimitBackend,
   RateLimitResult,
@@ -34,8 +39,11 @@ export class MemoryTaskRepository implements TaskRepository {
 
   async create(input: TaskCreateInput): Promise<TaskRecord> {
     const now = Date.now();
+    // 用户未取名时以创建时间命名（与 D1 版一致）
+    const name = input.name?.trim() || formatTaskName(now);
     const task: TaskRecord = {
       id: randomUUID(),
+      name,
       status: 'PENDING',
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
@@ -61,7 +69,7 @@ export class MemoryTaskRepository implements TaskRepository {
 
   async update(
     id: string,
-    patch: Partial<Pick<TaskRecord, 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile'>>,
+    patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
   ): Promise<TaskRecord | undefined> {
     const t = this.tasks.get(id);
     if (!t) return undefined;
@@ -86,6 +94,8 @@ export class MemoryTaskRepository implements TaskRepository {
     if (t.status === 'COMPLETED' || t.status === 'FAILED') return t;
     t.status = status;
     if (error) t.error = error;
+    // 终态写入结束时间（与 D1 版 `completed_at IS NULL` 语义一致，保证幂等）
+    if (status === 'COMPLETED' || status === 'FAILED') t.completedAt = Date.now();
     t.updatedAt = Date.now();
     return t;
   }
@@ -188,10 +198,10 @@ export class MemoryAccountLeaseStore implements AccountLeaseStore {
 
 /** 内存对象存储（调试用，返回 memory:// URL）。 */
 export class MemoryObjectStore implements ObjectStore {
-  private blobs = new Map<string, { body: ArrayBuffer | Uint8Array | string; contentType?: string }>();
+  private blobs = new Map<string, { body: ArrayBuffer | Uint8Array | string; contentType?: string; createdAt: number }>();
 
   async put(key: string, body: ArrayBuffer | Uint8Array | string, contentType?: string): Promise<string> {
-    this.blobs.set(key, { body, ...(contentType ? { contentType } : {}) });
+    this.blobs.set(key, { body, createdAt: Date.now(), ...(contentType ? { contentType } : {}) });
     return this.getUrl(key);
   }
 
@@ -203,6 +213,67 @@ export class MemoryObjectStore implements ObjectStore {
     for (const k of [...this.blobs.keys()]) {
       if (k === prefixOrKey || k.startsWith(prefixOrKey)) this.blobs.delete(k);
     }
+  }
+
+  async get(key: string): Promise<ObjectBody | null> {
+    const entry = this.blobs.get(key);
+    if (!entry) return null;
+    const { body, contentType, createdAt } = entry;
+    const buf = body instanceof ArrayBuffer ? body : new TextEncoder().encode(String(body)).buffer;
+    return {
+      key,
+      size: buf.byteLength,
+      lastModified: new Date(createdAt).toISOString(),
+      ...(contentType ? { contentType } : {}),
+      arrayBuffer: () => Promise.resolve(buf),
+      text: () => Promise.resolve(typeof body === 'string' ? body : new TextDecoder().decode(buf)),
+    };
+  }
+
+  async list(options?: ListOptions): Promise<ListResult> {
+    const prefix = options?.prefix ?? '';
+    const delimiter = options?.delimiter;
+    const limit = options?.limit ?? 1000;
+
+    const allKeys = [...this.blobs.keys()].filter((k) => k.startsWith(prefix)).sort();
+    const objects: ObjectMeta[] = [];
+    const prefixSet = new Set<string>();
+    const basePrefix = prefix.endsWith('/') ? prefix : prefix ? `${prefix}/` : '';
+
+    for (const key of allKeys) {
+      if (objects.length + prefixSet.size >= limit) break;
+      if (delimiter === '/') {
+        const rest = key.slice(prefix.length);
+        const slashIdx = rest.indexOf('/');
+        if (slashIdx === -1) {
+          const entry = this.blobs.get(key)!;
+          objects.push({
+            key,
+            size: (typeof entry.body === 'string' ? new TextEncoder().encode(entry.body).byteLength : entry.body.byteLength),
+            lastModified: new Date(entry.createdAt).toISOString(),
+            ...(entry.contentType ? { contentType: entry.contentType } : {}),
+          });
+        } else {
+          prefixSet.add(`${basePrefix}${rest.slice(0, slashIdx + 1)}`);
+        }
+      } else {
+        const entry = this.blobs.get(key)!;
+        objects.push({
+          key,
+          size: (typeof entry.body === 'string' ? new TextEncoder().encode(entry.body).byteLength : entry.body.byteLength),
+          lastModified: new Date(entry.createdAt).toISOString(),
+          ...(entry.contentType ? { contentType: entry.contentType } : {}),
+        });
+      }
+    }
+
+    const truncated = allKeys.length > objects.length + prefixSet.size;
+    return { objects, delimitedPrefixes: [...prefixSet].sort(), truncated, ...(truncated ? { cursor: '' } : {}) };
+  }
+
+  async createDirectory(prefix: string): Promise<void> {
+    const key = prefix.endsWith('/') ? prefix : `${prefix}/`;
+    this.blobs.set(key, { body: '', contentType: 'application/x-directory', createdAt: Date.now() });
   }
 }
 

@@ -19,17 +19,58 @@ import type { ApiType, Stage, TaskCheckpoint, TaskRecord, TaskStatus } from '../
 /** 存储驱动类型。 */
 export type StorageDriver = 'memory' | 'cloudflare';
 
-/** 产物对象存储（内存 / R2 两套实现）。 */
+/** 对象元数据。 */
+export interface ObjectMeta {
+  key: string;
+  size: number;
+  /** ISO 8601 时间字符串。 */
+  lastModified: string;
+  contentType?: string;
+  etag?: string;
+}
+
+/** 对象本体（含元数据 + 内容读取）。 */
+export interface ObjectBody extends ObjectMeta {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  text(): Promise<string>;
+}
+
+/** 列举选项。 */
+export interface ListOptions {
+  prefix?: string;
+  /** 分隔符（如 '/'）用于虚拟目录聚合。 */
+  delimiter?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+/** 列举结果。 */
+export interface ListResult {
+  objects: ObjectMeta[];
+  /** 以分隔符截断的前缀（即子目录）。 */
+  delimitedPrefixes: string[];
+  truncated: boolean;
+  cursor?: string;
+}
+
+/** 产物对象存储（内存 / FS / R2 三套实现）。 */
 export interface ObjectStore {
   put(key: string, body: ArrayBuffer | Uint8Array | string, contentType?: string): Promise<string>;
   /** 返回可访问 URL（R2 用 R2_PUBLIC_URL 前缀）。 */
   getUrl(key: string): string;
   /** 删除指定 key 或前缀下的对象。 */
   delete(prefixOrKey: string): Promise<void>;
+  /** 读取对象本体与元数据；不存在返回 null。 */
+  get(key: string): Promise<ObjectBody | null>;
+  /** 列举对象（支持前缀 + 分隔符虚拟目录）。 */
+  list(options?: ListOptions): Promise<ListResult>;
+  /** 创建目录标记（R2 为空对象 / FS 为实际目录）。 */
+  createDirectory(prefix: string): Promise<void>;
 }
 
 /** 任务创建入参。 */
 export interface TaskCreateInput {
+  name?: string;
   referenceUrl?: string;
   maxDurationSeconds: number;
   normalizeSize: number;
@@ -44,7 +85,7 @@ export interface TaskRepository {
   list(): Promise<TaskRecord[]>;
   update(
     id: string,
-    patch: Partial<Pick<TaskRecord, 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile'>>,
+    patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
   ): Promise<TaskRecord | undefined>;
   advanceStage(id: string, stage: Stage): Promise<TaskRecord | undefined>;
   markStatus(id: string, status: TaskStatus, error?: string): Promise<TaskRecord | undefined>;

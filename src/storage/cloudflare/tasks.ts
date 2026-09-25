@@ -9,6 +9,7 @@
  * node:crypto 的 randomUUID 在 Workers 下需 nodejs_compat（wrangler.toml 已开启）。
  */
 import { randomUUID } from 'node:crypto';
+import { formatTaskName } from '../taskName.js';
 import { emptyCheckpoint, mergeCheckpoints } from '../merge.js';
 import type { D1Database } from './bindings.js';
 import type { Stage, TaskCheckpoint, TaskRecord, TaskStatus } from '../../types/index.js';
@@ -16,6 +17,7 @@ import type { TaskCreateInput, TaskRepository } from '../types.js';
 
 interface TaskRow {
   id: string;
+  name: string | null;
   status: string;
   stage: string;
   reference_url: string | null;
@@ -27,6 +29,7 @@ interface TaskRow {
   checkpoint: string | null;
   created_at: number;
   updated_at: number;
+  completed_at: number | null;
 }
 
 function rowToTask(r: TaskRow): TaskRecord {
@@ -40,9 +43,11 @@ function rowToTask(r: TaskRow): TaskRecord {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
+  if (r.name) task.name = r.name;
   if (r.reference_url) task.referenceUrl = r.reference_url;
   if (r.run_file) task.runFile = r.run_file;
   if (r.error) task.error = r.error;
+  if (r.completed_at) task.completedAt = r.completed_at;
   if (r.checkpoint) {
     try {
       task.checkpoint = JSON.parse(r.checkpoint) as TaskCheckpoint;
@@ -60,14 +65,17 @@ export class D1TaskRepository implements TaskRepository {
     const now = Date.now();
     const id = randomUUID();
     const checkpoint: TaskCheckpoint = { remoteTasks: {}, completedStages: [], completedShots: [] };
+    // 用户未取名时以创建时间命名，便于列表中区分
+    const name = input.name?.trim() || formatTaskName(now);
     await this.db
       .prepare(
         `INSERT INTO tasks
-          (id, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, run_file, checkpoint, created_at, updated_at)
-         VALUES (?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, name, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, run_file, checkpoint, created_at, updated_at)
+         VALUES (?, ?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
+        name,
         input.referenceUrl ?? null,
         input.maxDurationSeconds,
         input.normalizeSize,
@@ -80,6 +88,7 @@ export class D1TaskRepository implements TaskRepository {
       .run();
     return {
       id,
+      name,
       status: 'PENDING',
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
@@ -134,6 +143,14 @@ export class D1TaskRepository implements TaskRepository {
     if (error !== undefined) {
       stmts.push(this.db.prepare('UPDATE tasks SET error = ? WHERE id = ?').bind(error, id));
     }
+    // 终态写入结束时间（已终态的重复回调不覆盖，保证幂等）
+    if (status === 'COMPLETED' || status === 'FAILED') {
+      stmts.push(
+        this.db
+          .prepare("UPDATE tasks SET completed_at = ? WHERE id = ? AND completed_at IS NULL")
+          .bind(now, id),
+      );
+    }
     await this.db.batch(stmts);
     return this.get(id);
   }
@@ -152,11 +169,12 @@ export class D1TaskRepository implements TaskRepository {
     await this.db
       .prepare(
         `UPDATE tasks SET
-           status = ?, stage = ?, reference_url = ?, max_duration_seconds = ?, normalize_size = ?,
-           output_resolution = ?, run_file = ?, error = ?, checkpoint = ?, updated_at = ?
+           name = ?, status = ?, stage = ?, reference_url = ?, max_duration_seconds = ?, normalize_size = ?,
+           output_resolution = ?, run_file = ?, error = ?, checkpoint = ?, completed_at = ?, updated_at = ?
          WHERE id = ?`,
       )
       .bind(
+        t.name ?? null,
         t.status,
         t.stage,
         t.referenceUrl ?? null,
@@ -166,6 +184,7 @@ export class D1TaskRepository implements TaskRepository {
         t.runFile ?? null,
         t.error ?? null,
         JSON.stringify(t.checkpoint ?? null),
+        t.completedAt ?? null,
         t.updatedAt,
         t.id,
       )

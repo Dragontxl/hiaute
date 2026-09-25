@@ -3,10 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { MemoryAccountLeaseStore, MemoryRateLimitBackend, MemoryTaskRepository } from '../src/storage/memory.js';
+import { MemoryAccountLeaseStore, MemoryObjectStore, MemoryRateLimitBackend, MemoryTaskRepository } from '../src/storage/memory.js';
 import { emptyCheckpoint, mergeCheckpoints, parseCheckpoint } from '../src/storage/merge.js';
 import { FsObjectStore } from '../src/storage/fs.js';
 import { rateRulesFor } from '../src/storage/rules.js';
+import { formatTaskName } from '../src/storage/taskName.js';
 
 describe('checkpoint 合并语义', () => {
   it('completedStages 并集去重，重复上报不重复计数', () => {
@@ -233,6 +234,44 @@ describe('MemoryTaskRepository 状态机幂等', () => {
     assert.equal(await repo.advanceStage('nope', 'DETECT'), undefined);
     assert.equal(await repo.markStatus('nope', 'RUNNING'), undefined);
   });
+
+  it('name 缺省时以创建时间命名（YYYYMMDD-HHmm）', async () => {
+    const repo = new MemoryTaskRepository();
+    const t = await createTask(repo);
+    assert.ok(/^\d{8}-\d{4}$/.test(t.name ?? ''), `默认名格式: ${t.name}`);
+    // 与工具函数结果一致（同一分钟）
+    assert.equal(t.name, formatTaskName(t.createdAt));
+  });
+
+  it('name 显式指定时去首尾空格后原样保留', async () => {
+    const repo = new MemoryTaskRepository();
+    const t = await repo.create({
+      name: '  我的任务  ',
+      maxDurationSeconds: 60,
+      normalizeSize: 512,
+      outputResolution: '720p',
+    });
+    assert.equal(t.name, '我的任务');
+  });
+
+  it('markStatus 终态写入 completedAt；终态重放不覆盖', async () => {
+    const repo = new MemoryTaskRepository();
+    const t = await createTask(repo);
+    assert.equal(t.completedAt, undefined);
+    assert.equal((await repo.markStatus(t.id, 'RUNNING'))?.completedAt, undefined, '非终态不写结束时间');
+    const done = await repo.markStatus(t.id, 'COMPLETED');
+    assert.ok(done?.completedAt);
+    await new Promise((r) => setTimeout(r, 5));
+    const replayed = await repo.markStatus(t.id, 'FAILED');
+    assert.equal(replayed?.completedAt, done!.completedAt, '终态重放不覆盖结束时间');
+    assert.equal(replayed?.status, 'COMPLETED', '终态不可被覆盖');
+  });
+});
+
+describe('formatTaskName', () => {
+  it('格式为 YYYYMMDD-HHmm（两位数补零）', () => {
+    assert.equal(formatTaskName(new Date(2026, 8, 25, 9, 5).getTime()), '20260925-0905');
+  });
 });
 
 describe('FsObjectStore', () => {
@@ -266,5 +305,121 @@ describe('FsObjectStore', () => {
     await store.delete('tasks/t1');
     await store.delete('tasks/t1/a.mp4');
     await store.delete('no-such-prefix');
+  });
+
+  it('get 返回对象本体与元数据', async () => {
+    const store = new FsObjectStore(dir);
+    await store.put('tasks/t1/final.mp4', 'video-bytes', 'video/mp4');
+    const body = await store.get('tasks/t1/final.mp4');
+    assert.ok(body);
+    assert.equal(body!.key, 'tasks/t1/final.mp4');
+    assert.equal(body!.size, 'video-bytes'.length);
+    assert.ok(body!.lastModified);
+    const text = await body!.text();
+    assert.equal(text, 'video-bytes');
+  });
+
+  it('get 不存在的 key 返回 null', async () => {
+    const store = new FsObjectStore(dir);
+    assert.equal(await store.get('no-such-key'), null);
+  });
+
+  it('list 返回对象（无分隔符时递归）', async () => {
+    const store = new FsObjectStore(dir);
+    await store.put('tasks/t1/a.mp4', 'a');
+    await store.put('tasks/t2/b.mp4', 'b');
+    const result = await store.list({ prefix: 'tasks/' });
+    assert.equal(result.objects.length, 2);
+    assert.equal(result.delimitedPrefixes.length, 0);
+  });
+
+  it('list 使用分隔符时返回虚拟目录', async () => {
+    const store = new FsObjectStore(dir);
+    await store.put('tasks/t1/a.mp4', 'a');
+    await store.put('tasks/t2/b.mp4', 'b');
+    await store.put('tasks/notes.txt', 'notes');
+    const result = await store.list({ prefix: 'tasks/', delimiter: '/' });
+    assert.equal(result.delimitedPrefixes.length, 2);
+    assert.ok(result.delimitedPrefixes.includes('tasks/t1/'));
+    assert.ok(result.delimitedPrefixes.includes('tasks/t2/'));
+    assert.equal(result.objects.length, 1);
+    assert.equal(result.objects[0]!.key, 'tasks/notes.txt');
+  });
+
+  it('list 空目录返回空结果', async () => {
+    const store = new FsObjectStore(dir);
+    const result = await store.list({ prefix: 'no-such-dir/' });
+    assert.equal(result.objects.length, 0);
+    assert.equal(result.delimitedPrefixes.length, 0);
+  });
+
+  it('createDirectory 创建目录标记', async () => {
+    const store = new FsObjectStore(dir);
+    await store.createDirectory('tasks/t1/');
+    const result = await store.list({ prefix: 'tasks/', delimiter: '/' });
+    assert.ok(result.delimitedPrefixes.includes('tasks/t1/'));
+  });
+});
+
+describe('MemoryObjectStore', () => {
+  it('put 并返回 memory:// URL', async () => {
+    const store = new MemoryObjectStore();
+    const url = await store.put('test/file.txt', 'hello');
+    assert.equal(url, 'memory://test/file.txt');
+  });
+
+  it('get 返回对象本体与元数据', async () => {
+    const store = new MemoryObjectStore();
+    await store.put('test/file.txt', 'hello', 'text/plain');
+    const body = await store.get('test/file.txt');
+    assert.ok(body);
+    assert.equal(body!.key, 'test/file.txt');
+    assert.equal(body!.size, 5);
+    assert.equal(body!.contentType, 'text/plain');
+    assert.equal(await body!.text(), 'hello');
+  });
+
+  it('get 不存在的 key 返回 null', async () => {
+    const store = new MemoryObjectStore();
+    assert.equal(await store.get('no-such-key'), null);
+  });
+
+  it('list 返回对象（无分隔符时递归）', async () => {
+    const store = new MemoryObjectStore();
+    await store.put('tasks/t1/a.mp4', 'a');
+    await store.put('tasks/t2/b.mp4', 'b');
+    const result = await store.list({ prefix: 'tasks/' });
+    assert.equal(result.objects.length, 2);
+    assert.equal(result.delimitedPrefixes.length, 0);
+  });
+
+  it('list 使用分隔符时返回虚拟目录', async () => {
+    const store = new MemoryObjectStore();
+    await store.put('tasks/t1/a.mp4', 'a');
+    await store.put('tasks/t2/b.mp4', 'b');
+    await store.put('tasks/notes.txt', 'notes');
+    const result = await store.list({ prefix: 'tasks/', delimiter: '/' });
+    assert.equal(result.delimitedPrefixes.length, 2);
+    assert.ok(result.delimitedPrefixes.includes('tasks/t1/'));
+    assert.ok(result.delimitedPrefixes.includes('tasks/t2/'));
+    assert.equal(result.objects.length, 1);
+    assert.equal(result.objects[0]!.key, 'tasks/notes.txt');
+  });
+
+  it('createDirectory 创建目录标记', async () => {
+    const store = new MemoryObjectStore();
+    await store.createDirectory('tasks/t1/');
+    const result = await store.list({ prefix: 'tasks/', delimiter: '/' });
+    assert.ok(result.delimitedPrefixes.includes('tasks/t1/'));
+  });
+
+  it('delete 支持前缀删除', async () => {
+    const store = new MemoryObjectStore();
+    await store.put('tasks/t1/a.mp4', 'a');
+    await store.put('tasks/t2/b.mp4', 'b');
+    await store.delete('tasks/t1');
+    const result = await store.list({ prefix: 'tasks/' });
+    assert.equal(result.objects.length, 1);
+    assert.equal(result.objects[0]!.key, 'tasks/t2/b.mp4');
   });
 });

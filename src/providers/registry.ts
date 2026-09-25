@@ -27,11 +27,14 @@ export function createProviders(accounts: AccountState[], masterKey: string, sto
     leases: storage?.leases ?? new MemoryAccountLeaseStore(),
     ...(storage && { rate: storage.rate }),
   });
+  // 取第一个 agnes-video 账户的 modelName 作为首选模型；缺省用 2.5-flash
+  const videoAccount = accounts.find((a) => a.apiType === 'agnes-video');
+  const configuredModel = videoAccount?.modelName ?? 'agnes-video-2.5-flash';
   return {
     pool,
     agnesText: new AgnesTextProvider(pool),
     agnesImage: new AgnesImageProvider(pool),
-    agnesVideo: new AgnesVideoProvider(pool),
+    agnesVideo: new AgnesVideoProvider(pool, configuredModel),
     gemini: new GeminiProvider(pool),
     edgetts: new EdgeTtsProvider(),
   };

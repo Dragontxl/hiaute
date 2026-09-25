@@ -45,6 +45,9 @@ jobs:
       - name: Install deps
         run: npm ci
 
+      - name: Build frontend HTML
+        run: node scripts/build-frontend.cjs
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -67,7 +70,12 @@ jobs:
           DISPATCH_REPO: ${{ secrets.DISPATCH_REPO }}
         run: |
           set -e
-          put() { printf '%s' "$2" | npx --yes wrangler@3 secret put "$1"; }
+          # 空值跳过：否则会把 secret 覆写成空字符串（如未配置 DISPATCH_PAT 时 GITHUB_PAT 被清空，
+          # 导致控制面静默跳过 dispatch、任务永远停在 PENDING）
+          put() {
+            if [ -z "$2" ]; then echo "跳过 $1（值为空，保持原有 secret）"; return 0; fi
+            printf '%s' "$2" | npx --yes wrangler@3 secret put "$1"
+          }
           put HYPITAPP_MASTER_KEY "$HYPITAPP_MASTER_KEY"
           put HYPITAPP_CALLBACK_SECRET "$HYPITAPP_CALLBACK_SECRET"
           put HYPITAPP_API_TOKEN "$HYPITAPP_API_TOKEN"

@@ -13,6 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       nodejs npm \
     && rm -rf /var/lib/apt/lists/*
 
+# 多网站参考视频下载（B 站/YouTube/TikTok…）：yt-dlp 优先，缺失时流水线退回直链 fetch
+RUN pip3 install --no-cache-dir yt-dlp
+
 WORKDIR /app
 
 # --- 应用依赖层（先用 package.json 以利用 Docker 层缓存，§7.3 第 3 点）---

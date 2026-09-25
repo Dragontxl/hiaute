@@ -22,6 +22,7 @@ import { STAGE_ORDER } from '../types/index.js';
 import type { Stage, TaskCheckpoint, VideoAnalysis } from '../types/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { Planner, planShotDurations } from '../planner/index.js';
+import { downloadReference } from './download.js';
 import type { HypitKernel } from '../kernel/index.js';
 import type { ObjectStore } from '../storage/types.js';
 
@@ -149,7 +150,8 @@ export class Pipeline {
       return;
     }
     const dest = join(dirs.work, 'reference.mp4');
-    const bytes = await downloadFile(ctx.referenceUrl, dest);
+    // 参考链接可能是视频页面（B 站/YouTube…）而非直链：优先 yt-dlp，不可用退回 fetch
+    const bytes = await downloadReference(ctx.referenceUrl, dest);
     art.referencePath = dest;
     const seconds = await probeSeconds(dest);
     if (seconds !== undefined) art.referenceSeconds = seconds;

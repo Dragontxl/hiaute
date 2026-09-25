@@ -31,6 +31,8 @@ export interface D1Database {
 export interface R2Object {
   key: string;
   size?: number;
+  lastModified?: Date;
+  etag?: string;
   httpMetadata?: { contentType?: string };
 }
 
@@ -38,11 +40,14 @@ export interface R2ObjectBody extends R2Object {
   json<T = unknown>(): Promise<T>;
   arrayBuffer(): Promise<ArrayBuffer>;
   text(): Promise<string>;
+  blob(): Promise<Blob>;
 }
 
 export interface R2ListResult {
   objects: R2Object[];
+  delimitedPrefixes?: string[];
   truncated?: boolean;
+  cursor?: string;
 }
 
 export interface R2Bucket {
@@ -53,7 +58,7 @@ export interface R2Bucket {
   ): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
   delete(keys: string | string[]): Promise<void>;
-  list(options?: { prefix?: string; limit?: number }): Promise<R2ListResult>;
+  list(options?: { prefix?: string; delimiter?: string; limit?: number; cursor?: string }): Promise<R2ListResult>;
 }
 
 /* ---------- Durable Objects ---------- */

@@ -4,6 +4,7 @@
 
 CREATE TABLE IF NOT EXISTS tasks (
   id                   TEXT PRIMARY KEY,
+  name                 TEXT,                        -- 任务名称（用户指定，缺省由创建时间命名）
   status               TEXT NOT NULL,               -- PENDING|DISPATCHED|RUNNING|PAUSED|COMPLETED|FAILED
   stage                TEXT NOT NULL,               -- DETECT|ANALYZE|CROP_SHOTS|CONVERT_FRAMES|GENERATE_SHOTS|COMPOSE
   reference_url        TEXT,
@@ -14,7 +15,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   error                TEXT,
   checkpoint           TEXT,                        -- JSON: TaskCheckpoint
   created_at           INTEGER NOT NULL,
-  updated_at           INTEGER NOT NULL
+  updated_at           INTEGER NOT NULL,
+  completed_at         INTEGER                      -- 终态（COMPLETED/FAILED）时间戳
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);

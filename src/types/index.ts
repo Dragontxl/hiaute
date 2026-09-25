@@ -88,6 +88,8 @@ export const STAGE_ORDER: Stage[] = [
 
 export interface TaskRecord {
   id: string;
+  /** 任务名称（用户指定；缺省以创建时间命名）。 */
+  name?: string;
   status: TaskStatus;
   stage: Stage;
   /** 参考视频地址（对象存储/URL）。 */
@@ -102,6 +104,8 @@ export interface TaskRecord {
   runFile?: string;
   createdAt: number;
   updatedAt: number;
+  /** 结束时间（终态 COMPLETED/FAILED 时写入，ms）。 */
+  completedAt?: number;
   checkpoint?: TaskCheckpoint;
   error?: string;
 }

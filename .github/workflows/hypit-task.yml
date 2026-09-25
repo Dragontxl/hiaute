@@ -59,8 +59,15 @@ jobs:
         run: npm ci
 
       # ffmpeg/ffprobe：裁切/抽帧/合成 + referenceSeconds 实测都需要（runner 默认未装）
-      - name: Install ffmpeg
-        run: sudo apt-get update -y && sudo apt-get install -y ffmpeg
+      # yt-dlp：参考链接常是视频页面（B 站/YouTube/TikTok…）而非直链，需 yt-dlp 解析下载。
+      #         用 latest 而非固定版本：站点提取器更新频繁，固定版本容易失效。
+      - name: Install ffmpeg and yt-dlp
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          sudo curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+          yt-dlp --version
 
       # --- 模型缓存（§8.3：跨运行复用 4–6GB 模型，避免每次重下）---
       - name: Restore model cache
@@ -89,6 +96,8 @@ jobs:
           set +e
           echo "== ffmpeg availability =="
           which ffmpeg ffprobe || true
+          echo "== yt-dlp availability =="
+          which yt-dlp && yt-dlp --version || true
           node -e "const{execFile}=require('node:child_process');execFile('ffmpeg',['-version'],(e,o)=>console.log('node execFile ffmpeg:',e?('ERR '+e.message):('OK '+(o||'').split('\n')[0])))"
           echo "== Gemini models (gemini-3.*) =="
           curl -sS --max-time 20 "https://generativelanguage.googleapis.com/v1beta/models?key=$HYPIT_GEMINI_MAIN_KEY" \

@@ -160,7 +160,14 @@ export class AgnesVideoProvider implements Provider {
     nativeAudio: true,
   };
 
-  constructor(private pool: AccountPool) {}
+  /**
+   * @param configuredModel  首选模型（来自账户配置）。缺省 = 'agnes-video-2.5-flash'。
+   *                         队列满时自动回退到 agnes-video-v2.0。
+   */
+  constructor(
+    private pool: AccountPool,
+    private configuredModel: string = 'agnes-video-2.5-flash',
+  ) {}
 
   async generate(input: VideoGenerateInput): Promise<VideoGenerateResult> {
     // 防御：不得超过上限（12s，2.5-flash 与 v2.0 都满足）。调用方传更大值带原因拒绝。
@@ -174,10 +181,26 @@ export class AgnesVideoProvider implements Provider {
       log.warn('agnes-video: 2.5 Flash 仅支持 720P，强制 size=720P', { requested: input.resolution });
     }
 
-    return withAccountFailover(this.pool, 'agnes-video', async ({ apiKey, baseUrl, modelName }) => {
+    // 第一轮：尝试首选模型（2.5-flash）
+    const primary = this.configuredModel.startsWith('v2.0') ? 'agnes-video-v2.0' : this.configuredModel;
+    try {
+      return await this._submitWithModel(input, primary);
+    } catch (err) {
+      const msg = String(err);
+      // 队列满 / 模型不可用：用 v2.0 兜底（v2.0 独立池，不受 2.5 队列影响）
+      if (msg.includes('video_queue_full') || msg.includes('model_not_available') || msg.includes('404')) {
+        log.warn('agnes-video: 首选模型不可用，回退到 v2.0', { primary, err: msg.slice(0, 300) });
+        return await this._submitWithModel(input, 'agnes-video-v2.0');
+      }
+      throw err;
+    }
+  }
+
+  /** 用指定模型提交一次完整调用（含账户重试，不含模型回退）。 */
+  private async _submitWithModel(input: VideoGenerateInput, model: string): Promise<VideoGenerateResult> {
+    return withAccountFailover(this.pool, 'agnes-video', async ({ apiKey, baseUrl }) => {
       const base = baseUrl.replace(/\/$/, '');
-      const origin = new URL(base).origin; // 轮询端点 /agnesapi 在 origin 下，不在 /v1 下
-      const model = modelName ?? 'agnes-video-2.5-flash';
+      const origin = new URL(base).origin;
       const body = buildVideoBody(model, input);
 
       const submit = await postJson<{ video_id?: string; task_id?: string; id?: string }>(
@@ -187,14 +210,7 @@ export class AgnesVideoProvider implements Provider {
       );
       const videoId = submit.video_id ?? submit.task_id ?? submit.id;
       if (!videoId) throw new Error('agnes-video: 创建任务未返回 video_id');
-      log.info('agnes-video submitted', {
-        videoId,
-        model,
-        mode: body.mode,
-        seconds: input.seconds,
-        numFrames: body.num_frames,
-      });
-
+      log.info('agnes-video submitted', { videoId, model, mode: body.mode, seconds: input.seconds, numFrames: body.num_frames });
       return await this.pollVideo(origin, apiKey, videoId, model, input.seconds);
     });
   }
