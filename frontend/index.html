@@ -95,12 +95,16 @@
     <input id="ref" placeholder="https://.../reference.mp4" />
     <label>单任务时长上限（秒，§8.4）</label>
     <input id="dur" type="number" value="180" min="5" max="1800" />
-    <div class="muted" id="durHint" style="margin-top:4px;font-size:12px">未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。</div>
     <label>Agnes 输出档位（§8.4）</label>
     <select id="res">
       <option value="480p">480p</option>
       <option value="720p" selected>720p</option>
       <option value="1080p">1080p（更耗磁盘，慎用）</option>
+    </select>
+    <label>生成方式</label>
+    <select id="renderMode">
+      <option value="llm" selected>大模型生成（画面由 AI 生成）</option>
+      <option value="code">代码生成（ffmpeg 确定性渲染，不耗模型）</option>
     </select>
     <button id="submit">提交任务</button>
   </div>
@@ -301,6 +305,7 @@
           referenceUrl: document.getElementById('ref').value || undefined,
           maxDurationSeconds: Number(document.getElementById('dur').value),
           outputResolution: document.getElementById('res').value,
+          renderMode: document.getElementById('renderMode').value,
         };
         const res = await api('/api/v1/tasks', {
           method: 'POST',
@@ -324,15 +329,6 @@
       }
     });
 
-    // hint
-    const refEl = document.getElementById('ref');
-    const durHintEl = document.getElementById('durHint');
-    function updateDurHint() {
-      const hasRef = refEl.value.trim().length > 0;
-      durHintEl.textContent = hasRef ? '已填参考视频：参考视频实测时长超过「时长上限」会被直接拒绝。' : '未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。';
-    }
-    refEl.addEventListener('input', updateDurHint);
-    updateDurHint();
     refresh();
     setInterval(refresh, 5000);
 

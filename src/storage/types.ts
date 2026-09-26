@@ -75,6 +75,8 @@ export interface TaskCreateInput {
   maxDurationSeconds: number;
   normalizeSize: number;
   outputResolution: '480p' | '720p' | '1080p';
+  /** 渲染模式：llm 大模型生成 / code ffmpeg 确定性渲染。 */
+  renderMode?: 'llm' | 'code';
   runFile?: string;
 }
 

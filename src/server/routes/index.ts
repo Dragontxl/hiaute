@@ -26,8 +26,8 @@ import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
 import { parseCheckpoint } from '../../storage/merge.js';
-import { artifactDirName } from '../../storage/taskName.js';
 import type { StorageBundle } from '../../storage/types.js';
+import { artifactDirName } from '../../storage/taskName.js';
 import type { AppConfig } from '../../types/index.js';
 
 /* ---------------- 校验 schema ---------------- */
@@ -231,6 +231,7 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       maxDurationSeconds: b.maxDurationSeconds ?? cfg.maxDurationSeconds,
       normalizeSize: cfg.normalizeSize,
       outputResolution: b.outputResolution ?? cfg.outputResolution,
+      ...(b.renderMode ? { renderMode: b.renderMode } : {}),
     });
     await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, artifactDirName(task.name, task.id, task.createdAt));
     const created = await storage.tasks.get(task.id);

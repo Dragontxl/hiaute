@@ -5,14 +5,13 @@
 CREATE TABLE IF NOT EXISTS tasks (
   id                   TEXT PRIMARY KEY,
   name                 TEXT,                        -- 任务名称（用户指定，缺省由创建时间命名）
-  brief                TEXT,                        -- 需求文本（自由创作 / SVML brief）
-  render_mode          TEXT,                        -- llm 生成画面 / code 代码确定性渲染
   status               TEXT NOT NULL,               -- PENDING|DISPATCHED|RUNNING|PAUSED|COMPLETED|FAILED
   stage                TEXT NOT NULL,               -- DETECT|ANALYZE|CROP_SHOTS|CONVERT_FRAMES|GENERATE_SHOTS|COMPOSE
   reference_url        TEXT,
   max_duration_seconds INTEGER NOT NULL,
   normalize_size       INTEGER NOT NULL,
   output_resolution    TEXT NOT NULL,               -- 480p|720p|1080p
+  render_mode          TEXT,                        -- llm|code（code = ffmpeg 确定性渲染，不耗模型）
   run_file             TEXT,                        -- Studio 编辑用 Run Source
   error                TEXT,
   checkpoint           TEXT,                        -- JSON: TaskCheckpoint

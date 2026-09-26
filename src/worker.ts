@@ -113,7 +113,6 @@ const FRONTEND_HTML = `<!doctype html>
     <input id="ref" placeholder="https://.../reference.mp4" />
     <label>单任务时长上限（秒，§8.4）</label>
     <input id="dur" type="number" value="180" min="5" max="1800" />
-    <div class="muted" id="durHint" style="margin-top:4px;font-size:12px">未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。</div>
     <label>Agnes 输出档位（§8.4）</label>
     <select id="res">
       <option value="480p">480p</option>
@@ -230,9 +229,8 @@ const FRONTEND_HTML = `<!doctype html>
           return;
         }
         rows.innerHTML = data.tasks.map((t) => {
-          // 与后端 artifactDirName 一致：<名称>_<UTC时间戳(YYYYMMDDHHmm)>，/ \\ 替换为 _
-          const stamp = new Date(t.createdAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
-          const dir = ((t.name && t.name.trim()) ? t.name.trim() : t.id).replace(/[\\\\/]/g, '_') + '_' + stamp;
+          // 产物目录名与任务名称一致（服务端同样把 / \\ 替换为 _）
+          const dir = (t.name || t.id).replace(/[\\\\/]/g, '_');
           return \`<tr>
               <td>\${escapeHtml(t.name || fmtTaskTime(t.createdAt))}</td>
               <td title="\${t.id}">\${t.id.slice(0,8)}…</td>
@@ -342,15 +340,6 @@ const FRONTEND_HTML = `<!doctype html>
       }
     });
 
-    // hint
-    const refEl = document.getElementById('ref');
-    const durHintEl = document.getElementById('durHint');
-    function updateDurHint() {
-      const hasRef = refEl.value.trim().length > 0;
-      durHintEl.textContent = hasRef ? '已填参考视频：参考视频实测时长超过「时长上限」会被直接拒绝。' : '未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。';
-    }
-    refEl.addEventListener('input', updateDurHint);
-    updateDurHint();
     refresh();
     setInterval(refresh, 5000);
 

@@ -100,6 +100,8 @@ export interface TaskRecord {
   normalizeSize: number;
   /** Agnes 输出档位（默认 480p/720p）。 */
   outputResolution: '480p' | '720p' | '1080p';
+  /** 渲染模式：llm 大模型生成画面 / code ffmpeg 确定性渲染。 */
+  renderMode?: 'llm' | 'code';
   /** Studio 编辑用的 Run Source（可选；启动编辑会话时写入，如 runs/main.svrun）。 */
   runFile?: string;
   createdAt: number;

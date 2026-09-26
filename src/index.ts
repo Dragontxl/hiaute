@@ -134,7 +134,8 @@ async function runTask(flags: string[]): Promise<void> {
     taskId,
     workDir: join(cfg.dataDir, 'tasks', taskId),
     ...(referenceUrl ? { referenceUrl } : {}),
-    brief: process.env.TASK_BRIEF ?? '复刻参考视频',
+    ...(process.env.TASK_BRIEF ? { brief: process.env.TASK_BRIEF } : {}),
+    ...(process.env.RENDER_MODE === 'code' ? { renderMode: 'code' as const } : {}),
     maxDurationSeconds: cfg.maxDurationSeconds,
     normalizeSize: cfg.normalizeSize,
     maxShots: cfg.maxShots,
@@ -143,7 +144,6 @@ async function runTask(flags: string[]): Promise<void> {
     planner,
     kernel,
     store: storage.objects,
-    ...(process.env.RENDER_MODE === 'code' ? { renderMode: 'code' } : {}),
     checkpoint,
     onCheckpoint: (cp) => saveCheckpoint(cfg, taskId, cp),
   });
