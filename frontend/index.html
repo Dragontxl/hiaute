@@ -210,8 +210,10 @@
           rows.innerHTML = '<tr><td colspan="10" class="muted">尚无任务</td></tr>';
           return;
         }
-        rows.innerHTML = data.tasks.map((t) =>
-          `<tr>
+        rows.innerHTML = data.tasks.map((t) => {
+          // 产物目录名与任务名称一致（服务端同样把 / \ 替换为 _）
+          const dir = (t.name || t.id).replace(/[\\/]/g, '_');
+          return `<tr>
               <td>${escapeHtml(t.name || fmtTaskTime(t.createdAt))}</td>
               <td title="${t.id}">${t.id.slice(0,8)}…</td>
               <td>${statusBadge(t.status)}</td>
@@ -221,10 +223,10 @@
               <td class="muted">${fmtTaskTime(t.createdAt)}</td>
               <td class="muted">${t.status==='COMPLETED' || t.status==='FAILED' ? fmtTaskTime(t.completedAt) : '—'}</td>
               <td class="muted">${t.error ? escapeHtml(t.error.slice(0,60)) : '—'}</td>
-              <td><button class="link" data-browse="${t.id}">浏览产物</button> <button class="link" data-files="${t.id}">查看文件</button> <button class="link" data-retry="${t.id}" ${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
+              <td><button class="link" data-browse="${dir}">浏览产物</button> <button class="link" data-files="${dir}">查看文件</button> <button class="link" data-retry="${t.id}" ${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
             </tr>
-            <tr id="files-${t.id}" style="display:none"><td colspan="10" class="task-detail" id="files-${t.id}-content">加载中…</td></tr>`
-        ).join('');
+            <tr id="files-${t.id}" style="display:none"><td colspan="10" class="task-detail" id="files-${t.id}-content">加载中…</td></tr>`;
+        }).join('');
       } catch (e) {
         console.warn('refresh failed', e);
       }

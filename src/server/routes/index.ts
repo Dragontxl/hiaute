@@ -106,13 +106,14 @@ async function tryDispatch(
   taskId: string,
   referenceUrl: string,
   maxDurationSeconds: number,
+  taskName?: string,
 ): Promise<'skipped' | 'ok' | 'failed'> {
   if (!cfg.github) {
     log.warn('github dispatch skipped: GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO not configured', { taskId });
     return 'skipped';
   }
   try {
-    await dispatchTask(cfg.github, { taskId, referenceUrl, maxDurationSeconds });
+    await dispatchTask(cfg.github, { taskId, ...(taskName ? { taskName } : {}), referenceUrl, maxDurationSeconds });
     await storage.tasks.markStatus(taskId, 'DISPATCHED');
     return 'ok';
   } catch (err) {
@@ -229,7 +230,7 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       normalizeSize: cfg.normalizeSize,
       outputResolution: b.outputResolution ?? cfg.outputResolution,
     });
-    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds);
+    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, task.name);
     const created = await storage.tasks.get(task.id);
     // 派发失败：与旧行为一致返回 502，便于前端明确感知
     if (created?.status === 'FAILED' && created.error) {
@@ -258,7 +259,7 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     if (t.status !== 'PENDING' && t.status !== 'FAILED' && t.status !== 'PAUSED') {
       return c.json({ error: 'not retryable', detail: `status ${t.status} 不支持重试（仅 PENDING/FAILED/PAUSED）` }, 409);
     }
-    const r = await tryDispatch(cfg, storage, id, t.referenceUrl ?? '', t.maxDurationSeconds);
+    const r = await tryDispatch(cfg, storage, id, t.referenceUrl ?? '', t.maxDurationSeconds, t.name);
     if (r === 'skipped') {
       return c.json(
         { error: 'dispatch unavailable', detail: '未配置 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO，无法派发（请先配置 worker secret）' },

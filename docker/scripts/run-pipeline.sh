@@ -18,6 +18,12 @@ export OUTPUT_RESOLUTION="${OUTPUT_RESOLUTION:-720p}"
 export HYPITAPP_DATA_DIR="${HYPITAPP_DATA_DIR:-data}"
 DURATION_SECONDS="${DURATION_SECONDS:-}"                  # 参考视频实际时长（由上游探测）
 
+# R2 产物目录名 = 任务名称（用户在列表里看到的那个）；去掉路径分隔符，空则退回 TASK_ID
+export TASK_NAME="${TASK_NAME:-$TASK_ID}"
+TASK_DIR_NAME="${TASK_NAME//\//_}"
+TASK_DIR_NAME="${TASK_DIR_NAME//\\/_}"
+TASK_DIR_NAME="${TASK_DIR_NAME:-$TASK_ID}"
+
 # 控制面基址（从回调地址推导）：产物上传到 R2 时复用 /api/v1/files/upload
 CONTROL_BASE="${CALLBACK_URL%%/api/v1/*}"
 
@@ -88,17 +94,18 @@ upload_artifact() {
 
 upload_artifacts() {
   local tdir="$HYPITAPP_DATA_DIR/tasks/$TASK_ID"
-  upload_artifact "$tdir/outputs/final.mp4" "tasks/$TASK_ID/"
-  upload_artifact "$tdir/script.svml" "tasks/$TASK_ID/"
-  upload_artifact "$tdir/reference.mp4" "tasks/$TASK_ID/"
+  local prefix="tasks/${TASK_DIR_NAME}/"
+  upload_artifact "$tdir/outputs/final.mp4" "$prefix"
+  upload_artifact "$tdir/script.svml" "$prefix"
+  upload_artifact "$tdir/reference.mp4" "$prefix"
   local f
   for f in "$tdir"/frames/*.jpg; do
     [[ -e "$f" ]] || continue
-    upload_artifact "$f" "tasks/$TASK_ID/frames/"
+    upload_artifact "$f" "${prefix}frames/"
   done
   for f in "$tdir"/shots/*.mp4; do
     [[ -e "$f" ]] || continue
-    upload_artifact "$f" "tasks/$TASK_ID/shots/"
+    upload_artifact "$f" "${prefix}shots/"
   done
 }
 
