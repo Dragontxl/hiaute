@@ -119,6 +119,11 @@ const FRONTEND_HTML = `<!doctype html>
       <option value="720p" selected>720p</option>
       <option value="1080p">1080p（更耗磁盘，慎用）</option>
     </select>
+    <label>生成方式</label>
+    <select id="renderMode">
+      <option value="llm" selected>大模型生成（画面由 AI 生成）</option>
+      <option value="code">代码生成（ffmpeg 确定性渲染，不耗模型）</option>
+    </select>
     <button id="submit">提交任务</button>
   </div>
 
@@ -229,8 +234,9 @@ const FRONTEND_HTML = `<!doctype html>
           return;
         }
         rows.innerHTML = data.tasks.map((t) => {
-          // 产物目录名与任务名称一致（服务端同样把 / \\ 替换为 _）
-          const dir = (t.name || t.id).replace(/[\\\\/]/g, '_');
+          // 与后端 artifactDirName 一致：<名称>_<UTC时间戳(YYYYMMDDHHmm)>，/ \\ 替换为 _
+          const stamp = new Date(t.createdAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+          const dir = ((t.name && t.name.trim()) ? t.name.trim() : t.id).replace(/[\\\\/]/g, '_') + '_' + stamp;
           return \`<tr>
               <td>\${escapeHtml(t.name || fmtTaskTime(t.createdAt))}</td>
               <td title="\${t.id}">\${t.id.slice(0,8)}…</td>
@@ -317,6 +323,7 @@ const FRONTEND_HTML = `<!doctype html>
           referenceUrl: document.getElementById('ref').value || undefined,
           maxDurationSeconds: Number(document.getElementById('dur').value),
           outputResolution: document.getElementById('res').value,
+          renderMode: document.getElementById('renderMode').value,
         };
         const res = await api('/api/v1/tasks', {
           method: 'POST',
@@ -903,6 +910,7 @@ const FRONTEND_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
 
 
 
