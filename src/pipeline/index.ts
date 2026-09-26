@@ -317,7 +317,7 @@ export class Pipeline {
       if (ctx.renderMode === 'code') {
         await ffmpeg(ctx.taskId, [
           '-f', 'lavfi', '-i', 'color=c=0x10216e:s=1280x720:r=24',
-          '-vf', `drawtext=text='Shot ${{i + 1}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2`,
+          '-vf', `drawtext=text='Shot ${i + 1}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2`,
           '-t', String(seconds), '-r', '24', '-pix_fmt', 'yuv420p', '-y', dest,
         ]);
         art.clipPaths[i] = dest;
