@@ -113,6 +113,7 @@ const FRONTEND_HTML = `<!doctype html>
     <input id="ref" placeholder="https://.../reference.mp4" />
     <label>单任务时长上限（秒，§8.4）</label>
     <input id="dur" type="number" value="180" min="5" max="1800" />
+    <div class="muted" id="durHint" style="margin-top:4px;font-size:12px">未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。</div>
     <label>Agnes 输出档位（§8.4）</label>
     <select id="res">
       <option value="480p">480p</option>
@@ -242,7 +243,7 @@ const FRONTEND_HTML = `<!doctype html>
               <td class="muted">\${fmtTaskTime(t.createdAt)}</td>
               <td class="muted">\${t.status==='COMPLETED' || t.status==='FAILED' ? fmtTaskTime(t.completedAt) : '—'}</td>
               <td class="muted">\${t.error ? escapeHtml(t.error.slice(0,60)) : '—'}</td>
-              <td><button class="link" data-browse="\${dir}">浏览产物</button> <button class="link" data-files="\${dir}" data-row="\${t.id}">查看文件</button> <button class="link" data-retry="\${t.id}" \${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
+              <td><button class="link" data-browse="\${dir}">浏览产物</button> <button class="link" data-files="\${dir}">查看文件</button> <button class="link" data-retry="\${t.id}" \${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
             </tr>
             <tr id="files-\${t.id}" style="display:none"><td colspan="10" class="task-detail" id="files-\${t.id}-content">加载中…</td></tr>\`;
         }).join('');
@@ -263,16 +264,15 @@ const FRONTEND_HTML = `<!doctype html>
       }
       const filesBtn = ev.target.closest('button[data-files]');
       if (filesBtn) {
-        const prefix = filesBtn.getAttribute('data-files');
-        const rowKey = filesBtn.getAttribute('data-row') || prefix;
-        const row = document.getElementById('files-' + rowKey);
-        const content = document.getElementById('files-' + rowKey + '-content');
+        const taskId = filesBtn.getAttribute('data-files');
+        const row = document.getElementById('files-' + taskId);
+        const content = document.getElementById('files-' + taskId + '-content');
         if (row.style.display === 'none') {
           row.style.display = '';
           if (!content.dataset.loaded) {
             content.textContent = '加载中…';
             try {
-              const res = await api('/api/v1/files?prefix=tasks/' + prefix + '/&limit=50');
+              const res = await api('/api/v1/files?prefix=tasks/' + taskId + '/&limit=50');
               const data = await res.json();
               const items = data.items || [];
               if (items.length === 0) {
@@ -342,6 +342,15 @@ const FRONTEND_HTML = `<!doctype html>
       }
     });
 
+    // hint
+    const refEl = document.getElementById('ref');
+    const durHintEl = document.getElementById('durHint');
+    function updateDurHint() {
+      const hasRef = refEl.value.trim().length > 0;
+      durHintEl.textContent = hasRef ? '已填参考视频：参考视频实测时长超过「时长上限」会被直接拒绝。' : '未填参考视频：将按提示词自由创作，视频长度按上方「时长上限」生成（不会超过该秒数）。';
+    }
+    refEl.addEventListener('input', updateDurHint);
+    updateDurHint();
     refresh();
     setInterval(refresh, 5000);
 
