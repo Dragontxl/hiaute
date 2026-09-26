@@ -365,6 +365,7 @@ export class Pipeline {
       art.clipPaths = await scanClips(dirs.outputs);
       clips = art.clipPaths.filter((p): p is string => Boolean(p));
     }
+    log.info('compose clips', { clipCount: clips.length, clips });
     if (clips.length === 0) {
       log.warn('COMPOSE skipped: no generated clips');
       return undefined;

@@ -929,6 +929,8 @@ const FRONTEND_HTML = `<!doctype html>
 
 
 
+
+
 /** 平台账户密钥下挂的 apiType（与 hypit.runtime.json 对齐）。 */
 const API_TYPES: ApiType[] = ['gemini', 'agnes-text', 'agnes-image', 'agnes-video', 'edgetts'];
 
