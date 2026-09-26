@@ -44,6 +44,7 @@ export class MemoryTaskRepository implements TaskRepository {
     const task: TaskRecord = {
       id: randomUUID(),
       name,
+      ...(input.brief ? { brief: input.brief } : {}),
       status: 'PENDING',
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
@@ -69,7 +70,7 @@ export class MemoryTaskRepository implements TaskRepository {
 
   async update(
     id: string,
-    patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
+    patch: Partial<Pick<TaskRecord, 'name' | 'brief' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
   ): Promise<TaskRecord | undefined> {
     const t = this.tasks.get(id);
     if (!t) return undefined;
