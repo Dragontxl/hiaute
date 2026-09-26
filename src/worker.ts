@@ -975,7 +975,8 @@ export default {
     const cfg = cfgFromEnv(env);
     const storage = createStorage('cloudflare', env, { apiTypes: API_TYPES });
 
-    if (request.method === 'GET' && request.url.endsWith('/')) {
+    // 首页：按 pathname 判断（不能用 url.endsWith('/')——带 ?token=… 时结尾是查询串）
+    if (request.method === 'GET' && new URL(request.url).pathname === '/') {
       return new Response(FRONTEND_HTML, {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', ...corsHeaders },
