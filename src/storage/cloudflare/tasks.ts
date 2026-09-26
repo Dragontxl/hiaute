@@ -18,6 +18,7 @@ import type { TaskCreateInput, TaskRepository } from '../types.js';
 interface TaskRow {
   id: string;
   name: string | null;
+  brief: string | null;
   status: string;
   stage: string;
   reference_url: string | null;
@@ -44,6 +45,7 @@ function rowToTask(r: TaskRow): TaskRecord {
     updatedAt: r.updated_at,
   };
   if (r.name) task.name = r.name;
+  if (r.brief) task.brief = r.brief;
   if (r.reference_url) task.referenceUrl = r.reference_url;
   if (r.run_file) task.runFile = r.run_file;
   if (r.error) task.error = r.error;
@@ -70,12 +72,13 @@ export class D1TaskRepository implements TaskRepository {
     await this.db
       .prepare(
         `INSERT INTO tasks
-          (id, name, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, run_file, checkpoint, created_at, updated_at)
-         VALUES (?, ?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, name, brief, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, run_file, checkpoint, created_at, updated_at)
+         VALUES (?, ?, ?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
         name,
+        input.brief ?? null,
         input.referenceUrl ?? null,
         input.maxDurationSeconds,
         input.normalizeSize,
@@ -89,6 +92,7 @@ export class D1TaskRepository implements TaskRepository {
     return {
       id,
       name,
+      ...(input.brief ? { brief: input.brief } : {}),
       status: 'PENDING',
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
@@ -169,12 +173,13 @@ export class D1TaskRepository implements TaskRepository {
     await this.db
       .prepare(
         `UPDATE tasks SET
-           name = ?, status = ?, stage = ?, reference_url = ?, max_duration_seconds = ?, normalize_size = ?,
+           name = ?, brief = ?, status = ?, stage = ?, reference_url = ?, max_duration_seconds = ?, normalize_size = ?,
            output_resolution = ?, run_file = ?, error = ?, checkpoint = ?, completed_at = ?, updated_at = ?
          WHERE id = ?`,
       )
       .bind(
         t.name ?? null,
+        t.brief ?? null,
         t.status,
         t.stage,
         t.referenceUrl ?? null,
