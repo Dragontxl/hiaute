@@ -31,7 +31,8 @@ jobs:
     env:
       # 任务参数（非敏感，可由 client_payload 提供）
       TASK_ID: ${{ github.event.client_payload.taskId || github.event.inputs.taskId || github.run_id }}
-      TASK_NAME: ${{ github.event.client_payload.taskName || github.event.inputs.taskName || '' }}
+      # 目录名走 dispatch 的 taskDir（= <项目名>_<UTC时间戳>）；手动触发时用 taskName 输入
+      TASK_NAME: ${{ github.event.client_payload.taskDir || github.event.inputs.taskName || '' }}
       TASK_REFERENCE_URL: ${{ github.event.client_payload.referenceUrl || github.event.inputs.referenceUrl }}
       TASK_BRIEF: ${{ github.event.client_payload.brief || github.event.inputs.brief || '' }}
       RENDER_MODE: ${{ github.event.client_payload.renderMode || github.event.inputs.renderMode || '' }}
