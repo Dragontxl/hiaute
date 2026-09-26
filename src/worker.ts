@@ -229,8 +229,9 @@ const FRONTEND_HTML = `<!doctype html>
           return;
         }
         rows.innerHTML = data.tasks.map((t) => {
-          // 产物目录名与任务名称一致（服务端同样把 / \\ 替换为 _）
-          const dir = (t.name || t.id).replace(/[\\\\/]/g, '_');
+          // 与后端 artifactDirName 一致：<名称>_<UTC时间戳(YYYYMMDDHHmm)>，/ \\ 替换为 _
+          const stamp = new Date(t.createdAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+          const dir = ((t.name && t.name.trim()) ? t.name.trim() : t.id).replace(/[\\\\/]/g, '_') + '_' + stamp;
           return \`<tr>
               <td>\${escapeHtml(t.name || fmtTaskTime(t.createdAt))}</td>
               <td title="\${t.id}">\${t.id.slice(0,8)}…</td>
@@ -241,7 +242,7 @@ const FRONTEND_HTML = `<!doctype html>
               <td class="muted">\${fmtTaskTime(t.createdAt)}</td>
               <td class="muted">\${t.status==='COMPLETED' || t.status==='FAILED' ? fmtTaskTime(t.completedAt) : '—'}</td>
               <td class="muted">\${t.error ? escapeHtml(t.error.slice(0,60)) : '—'}</td>
-              <td><button class="link" data-browse="\${dir}">浏览产物</button> <button class="link" data-files="\${dir}">查看文件</button> <button class="link" data-retry="\${t.id}" \${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
+              <td><button class="link" data-browse="\${dir}">浏览产物</button> <button class="link" data-files="\${dir}" data-row="\${t.id}">查看文件</button> <button class="link" data-retry="\${t.id}" \${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
             </tr>
             <tr id="files-\${t.id}" style="display:none"><td colspan="10" class="task-detail" id="files-\${t.id}-content">加载中…</td></tr>\`;
         }).join('');
@@ -262,15 +263,16 @@ const FRONTEND_HTML = `<!doctype html>
       }
       const filesBtn = ev.target.closest('button[data-files]');
       if (filesBtn) {
-        const taskId = filesBtn.getAttribute('data-files');
-        const row = document.getElementById('files-' + taskId);
-        const content = document.getElementById('files-' + taskId + '-content');
+        const prefix = filesBtn.getAttribute('data-files');
+        const rowKey = filesBtn.getAttribute('data-row') || prefix;
+        const row = document.getElementById('files-' + rowKey);
+        const content = document.getElementById('files-' + rowKey + '-content');
         if (row.style.display === 'none') {
           row.style.display = '';
           if (!content.dataset.loaded) {
             content.textContent = '加载中…';
             try {
-              const res = await api('/api/v1/files?prefix=tasks/' + taskId + '/&limit=50');
+              const res = await api('/api/v1/files?prefix=tasks/' + prefix + '/&limit=50');
               const data = await res.json();
               const items = data.items || [];
               if (items.length === 0) {
