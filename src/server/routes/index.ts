@@ -26,7 +26,6 @@ import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
 import { parseCheckpoint } from '../../storage/merge.js';
-import { artifactDirName } from '../../storage/taskName.js';
 import type { StorageBundle } from '../../storage/types.js';
 import type { AppConfig } from '../../types/index.js';
 
@@ -108,13 +107,14 @@ async function tryDispatch(
   referenceUrl: string,
   maxDurationSeconds: number,
   taskDir?: string,
+  brief?: string,
 ): Promise<'skipped' | 'ok' | 'failed'> {
   if (!cfg.github) {
     log.warn('github dispatch skipped: GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO not configured', { taskId });
     return 'skipped';
   }
   try {
-    await dispatchTask(cfg.github, { taskId, ...(taskDir ? { taskDir } : {}), referenceUrl, maxDurationSeconds });
+    await dispatchTask(cfg.github, { taskId, ...(taskDir ? { taskDir } : {}), ...(brief ? { brief } : {}), referenceUrl, maxDurationSeconds });
     await storage.tasks.markStatus(taskId, 'DISPATCHED');
     return 'ok';
   } catch (err) {
@@ -231,7 +231,7 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       normalizeSize: cfg.normalizeSize,
       outputResolution: b.outputResolution ?? cfg.outputResolution,
     });
-    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, artifactDirName(task.name, task.id, task.createdAt));
+    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, artifactDirName(task.name, task.id, task.createdAt), b.brief);
     const created = await storage.tasks.get(task.id);
     // 派发失败：与旧行为一致返回 502，便于前端明确感知
     if (created?.status === 'FAILED' && created.error) {
