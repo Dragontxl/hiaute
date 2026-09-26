@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       taskId: { required: false, type: string }
-      taskName: { required: false, type: string }
+      taskDir: { required: false, type: string }
       referenceUrl: { required: false, type: string }
       callbackUrl: { required: false, type: string }
       maxShots: { required: false, type: string, default: "2" }
@@ -30,7 +30,7 @@ jobs:
     env:
       # 任务参数（非敏感，可由 client_payload 提供）
       TASK_ID: ${{ github.event.client_payload.taskId || github.event.inputs.taskId || github.run_id }}
-      TASK_NAME: ${{ github.event.client_payload.taskName || github.event.inputs.taskName || '' }}
+      TASK_DIR: ${{ github.event.client_payload.taskDir || github.event.inputs.taskDir || '' }}
       TASK_REFERENCE_URL: ${{ github.event.client_payload.referenceUrl || github.event.inputs.referenceUrl }}
       CALLBACK_URL: ${{ github.event.client_payload.callbackUrl || github.event.inputs.callbackUrl }}
       # §8.4 降档三件套（maxShots 可用 workflow_dispatch 输入覆盖）

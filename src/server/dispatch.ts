@@ -19,8 +19,8 @@ export interface DispatchConfig {
 
 export interface DispatchPayload {
   taskId: string;
-  /** 任务名称（用作 R2 产物目录名，如 tasks/<taskName>/）。 */
-  taskName?: string;
+  /** R2 产物目录名（如 `中秋节2026_202601010000`），用作前缀 tasks/<taskDir>/。 */
+  taskDir?: string;
   referenceUrl: string;
   maxDurationSeconds: number;
 }
@@ -43,7 +43,7 @@ export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload
       // 注意：不要在此放 api key；仅放非敏感的任务描述
       client_payload: {
         taskId: payload.taskId,
-        taskName: payload.taskName ?? '',
+        taskDir: payload.taskDir ?? '',
         referenceUrl: payload.referenceUrl,
         maxDurationSeconds: payload.maxDurationSeconds,
         callbackUrl: cfg.callbackUrl,

@@ -15,7 +15,7 @@
  */
 import { execFile } from 'node:child_process';
 import { access, copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
 import { log } from '../core/logger.js';
 import { STAGE_ORDER } from '../types/index.js';
@@ -366,7 +366,7 @@ export class Pipeline {
         }
       } else {
         const listPath = join(dirs.outputs, 'concat.txt');
-        await writeFile(listPath, clips.map((c) => `file '${c.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+        await writeFile(listPath, clips.map((c) => 'file ' + basename(c)).join('\n') + '\n');
         await ffmpeg(ctx.taskId, ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-y', finalPath]);
       }
     } catch (err) {

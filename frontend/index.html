@@ -211,8 +211,9 @@
           return;
         }
         rows.innerHTML = data.tasks.map((t) => {
-          // 产物目录名与任务名称一致（服务端同样把 / \ 替换为 _）
-          const dir = (t.name || t.id).replace(/[\\/]/g, '_');
+          // 与后端 artifactDirName 一致：<名称>_<UTC时间戳(YYYYMMDDHHmm)>，/ \ 替换为 _
+          const stamp = new Date(t.createdAt).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+          const dir = ((t.name && t.name.trim()) ? t.name.trim() : t.id).replace(/[\\/]/g, '_') + '_' + stamp;
           return `<tr>
               <td>${escapeHtml(t.name || fmtTaskTime(t.createdAt))}</td>
               <td title="${t.id}">${t.id.slice(0,8)}…</td>
