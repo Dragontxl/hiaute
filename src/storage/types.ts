@@ -71,6 +71,7 @@ export interface ObjectStore {
 /** 任务创建入参。 */
 export interface TaskCreateInput {
   name?: string;
+  brief?: string;
   referenceUrl?: string;
   maxDurationSeconds: number;
   normalizeSize: number;
@@ -85,7 +86,7 @@ export interface TaskRepository {
   list(): Promise<TaskRecord[]>;
   update(
     id: string,
-    patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
+    patch: Partial<Pick<TaskRecord, 'name' | 'brief' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
   ): Promise<TaskRecord | undefined>;
   advanceStage(id: string, stage: Stage): Promise<TaskRecord | undefined>;
   markStatus(id: string, status: TaskStatus, error?: string): Promise<TaskRecord | undefined>;
