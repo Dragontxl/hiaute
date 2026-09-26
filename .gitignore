@@ -1,0 +1,39 @@
+# --- deps / build ---
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- 环境与密钥（绝不入库）---
+.env
+.env.*
+!.env.example
+secrets/
+*.key
+*.pem
+
+# 运行期账户库（含加密密钥，禁止提交）
+data/
+*.sqlite
+*.db
+
+# 任务产物与中间帧
+work/
+tmp/
+output/
+.cache/
+frames/
+*.log
+
+# 本地资料/密钥说明（含 API key / 令牌 / PAT，绝不入库）
+docs/
+
+# 从 Actions artifact 下回来的产物
+downloads/
+
+# README 不上传（用户已从仓库删除；此文件仅保留在本地）
+README.md
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store

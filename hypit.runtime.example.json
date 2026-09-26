@@ -1,0 +1,69 @@
+{
+  "credentials": {
+    "platform": { "use": "@hypit/credential-store-platform" }
+  },
+  "endpoints": {
+    "gemini.vision": {
+      "use": "@hypitapp/provider-gemini",
+      "config": {
+        "modelName": "gemini-3.5-flash",
+        "cooldown_seconds": 60,
+        "accounts": [
+          { "alias": "gemini-main",   "apiKey": { "store": "platform", "key": "gemini.api.1" }, "priority_weight": 100, "daily_limit": 1500, "max_concurrent": 1 },
+          { "alias": "gemini-backup", "apiKey": { "store": "platform", "key": "gemini.api.2" }, "priority_weight": 50,  "daily_limit": 1500, "max_concurrent": 1 }
+        ]
+      }
+    },
+    "agnes.text": {
+      "use": "@hypitapp/provider-agnes-text",
+      "config": {
+        "baseUrl": "https://apihub.agnes-ai.com/v1",
+        "modelName": "agnes-3.0-flash",
+        "cooldown_seconds": 60,
+        "accounts": [
+          { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000 },
+          { "alias": "agnes-2", "apiKey": { "store": "platform", "key": "agnes.api.2" }, "priority_weight": 90,  "daily_limit": 2000 },
+          { "alias": "agnes-3", "apiKey": { "store": "platform", "key": "agnes.api.3" }, "priority_weight": 80,  "daily_limit": 2000 },
+          { "alias": "agnes-4", "apiKey": { "store": "platform", "key": "agnes.api.4" }, "priority_weight": 70,  "daily_limit": 2000 },
+          { "alias": "agnes-5", "apiKey": { "store": "platform", "key": "agnes.api.5" }, "priority_weight": 60,  "daily_limit": 2000 }
+        ]
+      }
+    },
+    "agnes.image": {
+      "use": "@hypitapp/provider-agnes-image",
+      "config": {
+        "baseUrl": "https://apihub.agnes-ai.com/v1",
+        "modelName": "agnes-image-2.5-flash",
+        "cooldown_seconds": 60,
+        "accounts": [
+          { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000 },
+          { "alias": "agnes-2", "apiKey": { "store": "platform", "key": "agnes.api.2" }, "priority_weight": 90,  "daily_limit": 2000 },
+          { "alias": "agnes-3", "apiKey": { "store": "platform", "key": "agnes.api.3" }, "priority_weight": 80,  "daily_limit": 2000 },
+          { "alias": "agnes-4", "apiKey": { "store": "platform", "key": "agnes.api.4" }, "priority_weight": 70,  "daily_limit": 2000 },
+          { "alias": "agnes-5", "apiKey": { "store": "platform", "key": "agnes.api.5" }, "priority_weight": 60,  "daily_limit": 2000 }
+        ]
+      }
+    },
+    "agnes.video": {
+      "use": "@hypitapp/provider-agnes-video",
+      "config": {
+        "baseUrl": "https://apihub.agnes-ai.com/v1",
+        "modelName": "agnes-video-v2.0",
+        "cooldown_seconds": 60,
+        "accounts": [
+          { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000 },
+          { "alias": "agnes-2", "apiKey": { "store": "platform", "key": "agnes.api.2" }, "priority_weight": 90,  "daily_limit": 2000 },
+          { "alias": "agnes-3", "apiKey": { "store": "platform", "key": "agnes.api.3" }, "priority_weight": 80,  "daily_limit": 2000 },
+          { "alias": "agnes-4", "apiKey": { "store": "platform", "key": "agnes.api.4" }, "priority_weight": 70,  "daily_limit": 2000 },
+          { "alias": "agnes-5", "apiKey": { "store": "platform", "key": "agnes.api.5" }, "priority_weight": 60,  "daily_limit": 2000 }
+        ]
+      }
+    }
+  },
+  "bindings": {
+    "@hypit/model@1#video-generate": "agnes.video",
+    "@hypit/model@1#image-generate": "agnes.image",
+    "@hypit/model@1#video-understand": "gemini.vision",
+    "@hypit/model@1#script-write": "agnes.text"
+  }
+}

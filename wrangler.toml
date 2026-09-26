@@ -1,0 +1,54 @@
+# Cloudflare Workers 部署配置（真实值，由 deploy-cloudflare.yml 使用）
+# 资源：D1 已建（hypitapp）；DO 由 migrations 创建；R2 已绑定（hypitapp-objects）。
+# 控制面地址：https://hypitapp.ygtxl.dpdns.org
+account_id = "d30bed2763a23cf8eddf343ca192c5ff"
+name = "hypitapp"
+main = "src/worker.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ---- D1：任务与账本 ----
+[[d1_databases]]
+binding = "TASKS_DB"
+database_name = "hypitapp"
+database_id = "04ef6b0a-db27-4fd7-9194-65ce04a77cab"
+
+# ---- Durable Objects：限流 / 账户租约（强一致） ----
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiterDO"
+
+[[durable_objects.bindings]]
+name = "ACCOUNT_LEASES"
+class_name = "AccountLeaseDO"
+
+# free plan 的 Durable Objects 必须用 SQLite 存储（new_sqlite_classes）。
+# 注意：tag 已发布过就不要改这行——DO 迁移是增量的；这里 v1 尚未成功发布，直接修正即可。
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiterDO", "AccountLeaseDO"]
+
+# ---- R2：产物对象存储 ----
+[[r2_buckets]]
+binding = "OBJECTS"
+bucket_name = "hypitapp-objects"
+
+# ---- 自定义域名（国内可达；workers.dev 国内被墙）----
+# 控制面地址：https://hypitapp.ygtxl.dpdns.org
+[[routes]]
+pattern = "hypitapp.ygtxl.dpdns.org"
+custom_domain = true
+
+[vars]
+STORAGE_DRIVER = "cloudflare"
+MAX_DURATION_SECONDS = "1800"
+MAX_SHOTS = "10"
+NORMALIZE_SIZE = "512"
+OUTPUT_RESOLUTION = "720p"
+# 控制面自身的回调地址（派发给 GHA 的任务完成后回写状态）
+# 用自定义域名（国内可达、且绑定到本 worker 的当前 bundle）；
+# workers.dev 子域名在本账户未显式绑定，GHA 回调用它会 404。
+# 部署后通过 CF Dashboard → Variables 设置 HYPITAPP_MASTER_KEY 和 HYPITAPP_CALLBACK_SECRET
+HYPITAPP_CALLBACK_URL = "https://hypitapp.ygtxl.dpdns.org/api/v1/callback/github"
+# R2 公开前缀（绑定 R2 后再填）
+# R2_PUBLIC_URL = "https://objects.example.com"

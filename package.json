@@ -1,0 +1,30 @@
+{
+  "name": "hypitapp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hypit 应用改造（依 V2 方案）——应用服务层 + LLM 规划器 + hypit 内核 + Provider 适配层；支持本地与 GitHub Actions 两种算力形态。",
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts task",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js serve",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "node --import tsx --test \"test/*.test.ts\"",
+    "serve": "tsx src/index.ts serve",
+    "task:local": "tsx src/index.ts task",
+    "task:dispatch": "tsx src/index.ts task --dispatch"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.1",
+    "hono": "^4.6.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
