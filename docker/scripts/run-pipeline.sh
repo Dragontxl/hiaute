@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.." # 到项目根
 export TASK_ID="${TASK_ID:-gha-$(date +%s)}"
 export TASK_REFERENCE_URL="${TASK_REFERENCE_URL:-${REFERENCE_URL:-}}"
 export NORMALIZE_SIZE="${NORMALIZE_SIZE:-512}"            # §8.4 抽帧归一化降档
-export MAX_DURATION_SECONDS="${MAX_DURATION_SECONDS:-180}" # §8.4 限时长（主杠杆）
+export MAX_DURATION_SECONDS="${MAX_DURATION_SECONDS:-1800}" # §8.4 限时长（主杠杆）
 export MAX_SHOTS="${MAX_SHOTS:-10}"                       # 分镜条数上限（成本控制）
 export OUTPUT_RESOLUTION="${OUTPUT_RESOLUTION:-720p}"
 export HYPITAPP_DATA_DIR="${HYPITAPP_DATA_DIR:-data}"

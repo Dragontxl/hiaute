@@ -32,7 +32,7 @@ jobs:
       TASK_REFERENCE_URL: ${{ github.event.client_payload.referenceUrl || github.event.inputs.referenceUrl }}
       CALLBACK_URL: ${{ github.event.client_payload.callbackUrl || github.event.inputs.callbackUrl }}
       # §8.4 降档三件套（maxShots 可用 workflow_dispatch 输入覆盖）
-      MAX_DURATION_SECONDS: "180"
+      MAX_DURATION_SECONDS: "1800"
       NORMALIZE_SIZE: "512"
       MAX_SHOTS: ${{ github.event.inputs.maxShots || '10' }}
       OUTPUT_RESOLUTION: "720p"
