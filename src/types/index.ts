@@ -90,8 +90,6 @@ export interface TaskRecord {
   id: string;
   /** 任务名称（用户指定；缺省以创建时间命名）。 */
   name?: string;
-  /** 需求文本（自由创作 / SVML brief）。 */
-  brief?: string;
   status: TaskStatus;
   stage: Stage;
   /** 参考视频地址（对象存储/URL）。 */
