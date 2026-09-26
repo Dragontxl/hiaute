@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
 import { buildRoutes } from '../src/server/routes/index.js';
 import { createMemoryStorage } from '../src/storage/memory.js';
+import { signPayload } from '../src/core/crypto.js';
 import type { AppConfig } from '../src/types/index.js';
 
 const BASE_CFG: AppConfig = {
@@ -135,5 +136,52 @@ describe('任务创建与重试（dispatch 语义）', () => {
     const off = makeApp(BASE_CFG);
     assert.equal(((await (await on.fetch(new Request('http://localhost/healthz'))).json()) as any).dispatch, 'enabled');
     assert.equal(((await (await off.fetch(new Request('http://localhost/healthz'))).json()) as any).dispatch, 'disabled');
+  });
+});
+
+describe('产物上传回调 /api/v1/callback/artifact', () => {
+  it('有效签名上传成功并写入对象存储', async () => {
+    const app = makeApp(BASE_CFG);
+    const canonical = 'artifact:t1:tasks/t1/:final.mp4';
+    const sig = signPayload(canonical, BASE_CFG.callbackSecret);
+    const fd = new FormData();
+    fd.append('taskId', 't1');
+    fd.append('prefix', 'tasks/t1/');
+    fd.append('file', new File([new Uint8Array([1, 2, 3])], 'final.mp4', { type: 'video/mp4' }));
+    const res = await app.fetch(new Request('http://localhost/api/v1/callback/artifact', {
+      method: 'POST',
+      body: fd,
+      headers: { 'x-callback-signature': sig },
+    }));
+    assert.equal(res.status, 201);
+    const j = (await res.json()) as any;
+    assert.equal(j.key, 'tasks/t1/final.mp4');
+    assert.equal(j.size, 3);
+  });
+
+  it('无效签名返回 401', async () => {
+    const app = makeApp(BASE_CFG);
+    const fd = new FormData();
+    fd.append('taskId', 't1');
+    fd.append('prefix', 'tasks/t1/');
+    fd.append('file', new File([new Uint8Array([1])], 'a.mp4', { type: 'video/mp4' }));
+    const res = await app.fetch(new Request('http://localhost/api/v1/callback/artifact', {
+      method: 'POST',
+      body: fd,
+      headers: { 'x-callback-signature': 'bad' },
+    }));
+    assert.equal(res.status, 401);
+  });
+
+  it('缺少文件返回 400', async () => {
+    const app = makeApp(BASE_CFG);
+    const fd = new FormData();
+    fd.append('taskId', 't1');
+    const res = await app.fetch(new Request('http://localhost/api/v1/callback/artifact', {
+      method: 'POST',
+      body: fd,
+      headers: { 'x-callback-signature': 'x' },
+    }));
+    assert.equal(res.status, 400);
   });
 });

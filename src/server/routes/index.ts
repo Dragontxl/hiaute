@@ -21,7 +21,7 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { dispatchTask } from '../dispatch.js';
-import { buildFileRoutes } from './files.js';
+import { buildFileRoutes, safeKey, mimeFromKey } from './files.js';
 import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
@@ -178,6 +178,39 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     if (p.checkpoint !== undefined) await storage.tasks.mergeCheckpoint(p.taskId, parseCheckpoint(p.checkpoint));
     log.info('callback applied', { taskId: p.taskId, status: p.status });
     return c.json(await storage.tasks.get(p.taskId));
+  });
+
+  /**
+   * 产物上传回调（GHA → 控制面 → R2）。
+   *
+   * 用与状态回调相同的 HMAC 签名（X-Callback-Signature = sha256(`${secret}.${canonical}`)）鉴权，
+   * canonical = `artifact:${taskId}:${prefix}:${filename}`，使 GHA 无需持有控制面 Bearer 令牌
+   * 即可把 final.mp4 / script.svml / frames 写入 R2（出现在文件管理页面）。必须注册在 /api/v1 子路由之前。
+   */
+  app.post('/api/v1/callback/artifact', async (c) => {
+    if (!cfg.callbackSecret) return c.json({ error: 'callback secret not configured' }, 503);
+    const form = await c.req.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) return c.json({ error: 'missing file' }, 400);
+    const taskIdRaw = form.get('taskId');
+    const prefixField = form.get('prefix');
+    const taskId = typeof taskIdRaw === 'string' ? taskIdRaw : '';
+    const prefixRaw = typeof prefixField === 'string' ? prefixField : '';
+    const filename = file.name || 'artifact.bin';
+    const canonical = `artifact:${taskId}:${prefixRaw}:${filename}`;
+    if (!verifyPayloadSignature(canonical, cfg.callbackSecret, c.req.header('x-callback-signature') ?? '')) {
+      log.warn('artifact signature mismatch', { taskId, filename });
+      return c.json({ error: 'invalid signature' }, 401);
+    }
+    const prefix = safeKey(prefixRaw);
+    if (prefix === null) return c.json({ error: 'invalid prefix' }, 400);
+    const key = safeKey(`${prefix}${filename}`);
+    if (key === null) return c.json({ error: 'invalid filename' }, 400);
+    const buf = await file.arrayBuffer();
+    const contentType = file.type && file.type !== 'application/octet-stream' ? file.type : mimeFromKey(key);
+    await storage.objects.put(key, buf, contentType);
+    log.info('artifact uploaded to R2', { key, bytes: buf.byteLength });
+    return c.json({ key, size: buf.byteLength }, 201);
   });
 
   // 需要 Bearer 令牌的控制面路由

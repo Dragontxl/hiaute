@@ -18,6 +18,9 @@ export OUTPUT_RESOLUTION="${OUTPUT_RESOLUTION:-720p}"
 export HYPITAPP_DATA_DIR="${HYPITAPP_DATA_DIR:-data}"
 DURATION_SECONDS="${DURATION_SECONDS:-}"                  # 参考视频实际时长（由上游探测）
 
+# 控制面基址（从回调地址推导）：产物上传到 R2 时复用 /api/v1/files/upload
+CONTROL_BASE="${CALLBACK_URL%%/api/v1/*}"
+
 # --- 磁盘监控启动（§8.5 ②）---
 source docker/scripts/monitor-disk.sh
 start_monitor "$TASK_ID"
@@ -55,6 +58,50 @@ except Exception as e:
 PY
 }
 
+# --- 产物上传到 R2（复用控制面 /api/v1/files/upload，worker 侧写入 R2）---
+# 说明：GHA 内流水线用的是本地盘对象存储，产物默认只进 Actions artifact；
+# 这里显式 POST 到控制面上传接口，使其出现在文件管理页面（R2）。
+upload_artifact() {
+  local src="$1" prefix="$2"
+  [[ -f "$src" ]] || return 0
+  if [[ -z "${HYPITAPP_CALLBACK_SECRET:-}" || -z "$CONTROL_BASE" ]]; then
+    echo "skip upload (no HYPITAPP_CALLBACK_SECRET or CALLBACK_URL): $src"
+    return 0
+  fi
+  local name sig code
+  name="$(basename "$src")"
+  # 签名口径与控制面 core/crypto.ts signPayload 一致：sha256(secret + "." + canonical)
+  # canonical = artifact:<taskId>:<prefix>:<filename>
+  sig=$(HYPITAPP_TASK="$TASK_ID" HYPITAPP_PREFIX="$prefix" HYPITAPP_FILENAME="$name" python3 -c "import hashlib,os; s=os.environ.get('HYPITAPP_CALLBACK_SECRET',''); c='artifact:'+os.environ['HYPITAPP_TASK']+':'+os.environ['HYPITAPP_PREFIX']+':'+os.environ['HYPITAPP_FILENAME']; print(hashlib.sha256((s+'.'+c).encode()).hexdigest())")
+  code=$(curl -sS --max-time 300 -o /dev/null -w '%{http_code}' \
+    -X POST "$CONTROL_BASE/api/v1/callback/artifact" \
+    -H "x-callback-signature: $sig" \
+    -F "taskId=$TASK_ID" \
+    -F "prefix=$prefix" \
+    -F "file=@$src" || echo "000")
+  if [[ "$code" == "201" ]]; then
+    echo "uploaded -> ${prefix}${name}"
+  else
+    echo "upload failed (http $code): $src"
+  fi
+}
+
+upload_artifacts() {
+  local tdir="$HYPITAPP_DATA_DIR/tasks/$TASK_ID"
+  upload_artifact "$tdir/outputs/final.mp4" "tasks/$TASK_ID/"
+  upload_artifact "$tdir/script.svml" "tasks/$TASK_ID/"
+  upload_artifact "$tdir/reference.mp4" "tasks/$TASK_ID/"
+  local f
+  for f in "$tdir"/frames/*.jpg; do
+    [[ -e "$f" ]] || continue
+    upload_artifact "$f" "tasks/$TASK_ID/frames/"
+  done
+  for f in "$tdir"/shots/*.mp4; do
+    [[ -e "$f" ]] || continue
+    upload_artifact "$f" "tasks/$TASK_ID/shots/"
+  done
+}
+
 # --- 防卫：时长门槛（§8.4 主杠杆）---
 if [[ -n "$DURATION_SECONDS" && "$DURATION_SECONDS" -gt "$MAX_DURATION_SECONDS" ]]; then
   echo "ERROR: reference duration ${DURATION_SECONDS}s exceeds MAX_DURATION_SECONDS=${MAX_DURATION_SECONDS}s" >&2
@@ -74,6 +121,10 @@ if [[ "$RC" -ne 0 ]]; then
   send_callback_status "FAILED" || true
   exit "$RC"
 fi
+
+# --- 上传产物到 R2（失败不影响任务终态）---
+echo "== 上传产物到 R2 =="
+upload_artifacts || true
 
 echo "== 阶段边界快照：结束（§8.5 ①）=="
 df -h / || true

@@ -30,7 +30,7 @@ const MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50MB per chunk
 const KEY_RE = /^[^\x00-\x1f\x7f]*$/;
 
 /** 返回 null 表示非法 key（而非抛异常，便于路由层统一返回 400）。空字符串合法。 */
-function safeKey(key: string): string | null {
+export function safeKey(key: string): string | null {
   const k = key.replace(/^[/\\]+/, '');
   if (k === '') return '';
   if (!KEY_RE.test(k)) return null;
@@ -88,7 +88,7 @@ const MIME_BY_EXT: Record<string, string> = {
   svml: 'text/plain', svs: 'text/plain', svrun: 'text/plain',
 };
 
-function mimeFromKey(key: string): string {
+export function mimeFromKey(key: string): string {
   const ext = key.split('.').pop()?.toLowerCase() ?? '';
   return MIME_BY_EXT[ext] ?? 'application/octet-stream';
 }

@@ -39,6 +39,8 @@ jobs:
       # 密钥：全部来自 Secrets，放在 job 级以便所有 step（含 run-pipeline）可见
       HYPITAPP_MASTER_KEY: ${{ secrets.HYPITAPP_MASTER_KEY }}
       HYPITAPP_CALLBACK_SECRET: ${{ secrets.HYPITAPP_CALLBACK_SECRET }}
+      # 用于把产物上传到控制面（worker 写入 R2），使其出现在文件管理页面
+      HYPITAPP_API_TOKEN: ${{ secrets.HYPITAPP_API_TOKEN }}
       HYPIT_GEMINI_MAIN_KEY: ${{ secrets.HYPIT_GEMINI_MAIN_KEY }}
       HYPIT_GEMINI_BACKUP_KEY: ${{ secrets.HYPIT_GEMINI_BACKUP_KEY }}
       HYPIT_AGNES_1_KEY: ${{ secrets.HYPIT_AGNES_1_KEY }}
