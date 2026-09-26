@@ -81,6 +81,8 @@ interface Artifacts {
   analysis?: VideoAnalysis;
   svml?: string;
   scriptPath?: string;
+  /** 从 SVML 提取的逐镜头文字（description/onScreenText），供 code 模式确定性渲染。 */
+  scriptShots?: Array<{ description: string; onScreenText?: string }>;
   framePaths: Array<string | undefined>;
   clipPaths: Array<string | undefined>;
   finalPath?: string;
@@ -285,7 +287,9 @@ export class Pipeline {
     await writeFile(scriptPath, svml, 'utf8');
     art.svml = svml;
     art.scriptPath = scriptPath;
-    log.info('script written', { scriptPath, bytes: Buffer.byteLength(svml) });
+    // 无论 code 还是 llm 模式，brief 都已由 LLM 展开成脚本；code 模式据此渲染画面文字
+    art.scriptShots = parseScriptShots(svml);
+    log.info('script written', { scriptPath, bytes: Buffer.byteLength(svml), scriptShots: art.scriptShots.length });
 
     if (await ctx.kernel.available()) {
       try {
@@ -315,11 +319,13 @@ export class Pipeline {
       }
       const seconds = durations[i]!;
       if (ctx.renderMode === 'code') {
-        // code 模式：确定性渲染，不调模型。读取 brief / 分镜描述，用 drawtext 生成字幕画面。
-        // 纯色底 + 分镜标题 + brief/画面描述，让产物能反映需求文本而非单纯占位。
-        const shotInfo = analysis?.shots[i];
-        const text = shotInfo?.description || ctx.brief || `第 ${i + 1} 个镜头`;
-        const onScreen = shotInfo?.onScreenText;
+        // code 模式：确定性渲染，不调视频模型。文字内容来自 LLM 已展开的脚本
+        // （scriptShots 优先，其次参考视频分析，最后才落回原始 brief）。
+        const scriptShot = art.scriptShots?.[i];
+        const analysisShot = analysis?.shots[i];
+        const shotDesc = scriptShot?.description || analysisShot?.description || ctx.brief || `第 ${i + 1} 个镜头`;
+        const onScreen = scriptShot?.onScreenText || analysisShot?.onScreenText;
+        const text = shotDesc;
         // 中文字体：GHA 装了 fonts-noto-cjk；本地 macOS/其他平台各自探测，找不到就用默认字体（英文 fallback）
         const fontfiles = [
           '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
@@ -566,4 +572,67 @@ function shotPrompt(analysis: VideoAnalysis | undefined, i: number): string {
   if (s.onScreenText) parts.push(`屏上文字：${s.onScreenText}`);
   if (s.effects && s.effects.length > 0) parts.push(`特效：${s.effects.join('、')}`);
   return parts.join('\n');
+}
+
+/**
+ * 从 SVML 脚本里提取逐镜头文字，供 code 模式确定性渲染：
+ * 依次匹配每个 @moment 块中的 @cue 旁白 与 @visual 画面描述，映射到该分镜。
+ *
+ * SVML 契约示例：
+ *   @moment 0s 3s
+ *     @cue narrator: 旁白文字
+ *     @visual 描述该镜头画面
+ *
+ * 说明：这是轻量解析，模型输出可能不严格遵循语法——找不到就逐行兜底，
+ * 保证 brief 展开后的文字内容不会被丢弃（这正是用户命题需要 LLM 扩充的部分）。
+ */
+export function parseScriptShots(svml: string): Array<{ description: string; onScreenText?: string }> {
+  const shots: Array<{ description: string; onScreenText?: string }> = [];
+  const lines = svml.split('\n');
+  let desc = '';
+  let onScreen = '';
+  let cue: string | undefined;
+
+  const flush = () => {
+    if (desc || onScreen || cue) {
+      // @visual 是画面描述（作主文字），@cue 是旁白台词（作屏上文字）。
+      // 若 @visual 缺失则用旁白当主文字，保证非空。
+      const d = desc.trim() || (cue ? cue.trim() : '');
+      const o = cue && desc ? cue.trim() : onScreen.trim();
+      if (d || o) shots.push({ description: d || '（本镜画面）', ...(o ? { onScreenText: o } : {}) });
+      desc = '';
+      onScreen = '';
+      cue = undefined;
+    }
+  };
+
+  let inMoment = false;
+  let sawVisual = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('@moment')) {
+      inMoment = true;
+      sawVisual = false;
+      flush();
+      continue;
+    }
+    if (!inMoment) continue;
+    if (line.startsWith('@visual')) {
+      // 同一 moment 内出现第二个 @visual 才视为下一镜；否则它是本镜的画面描述
+      if (sawVisual) flush();
+      sawVisual = true;
+      desc = line.replace(/^@visual\s*/, '').trim();
+      continue;
+    }
+    if (line.startsWith('@cue')) {
+      // @cue narrator: 旁白文字（合并进当前分镜，作为屏上文字）
+      const m = line.match(/^@cue\s*[^:]*:\s*(.+)$/);
+      cue = m?.[1] ?? line.replace(/^@cue\s*/, '');
+      continue;
+    }
+    // 其他行（台词正文、注释等）忽略
+  }
+  flush();
+  return shots;
 }
