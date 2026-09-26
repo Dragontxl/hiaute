@@ -143,6 +143,7 @@ async function runTask(flags: string[]): Promise<void> {
     planner,
     kernel,
     store: storage.objects,
+    ...(process.env.RENDER_MODE === 'code' ? { renderMode: 'code' } : {}),
     checkpoint,
     onCheckpoint: (cp) => saveCheckpoint(cfg, taskId, cp),
   });
