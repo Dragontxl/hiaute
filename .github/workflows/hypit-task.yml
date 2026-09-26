@@ -15,6 +15,7 @@ on:
     inputs:
       taskId: { required: false, type: string }
       taskDir: { required: false, type: string }
+      brief: { required: false, type: string }
       referenceUrl: { required: false, type: string }
       callbackUrl: { required: false, type: string }
       maxShots: { required: false, type: string, default: "2" }
@@ -32,6 +33,7 @@ jobs:
       TASK_ID: ${{ github.event.client_payload.taskId || github.event.inputs.taskId || github.run_id }}
       TASK_NAME: ${{ github.event.client_payload.taskDir || github.event.inputs.taskDir || '' }}
       TASK_REFERENCE_URL: ${{ github.event.client_payload.referenceUrl || github.event.inputs.referenceUrl }}
+      TASK_BRIEF: ${{ github.event.client_payload.brief || github.event.inputs.brief || '' }}
       CALLBACK_URL: ${{ github.event.client_payload.callbackUrl || github.event.inputs.callbackUrl }}
       # §8.4 降档三件套（maxShots 可用 workflow_dispatch 输入覆盖）
       MAX_DURATION_SECONDS: "1800"
