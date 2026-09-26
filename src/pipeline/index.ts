@@ -315,15 +315,46 @@ export class Pipeline {
       }
       const seconds = durations[i]!;
       if (ctx.renderMode === 'code') {
+        // code 模式：确定性渲染，不调模型。读取 brief / 分镜描述，用 drawtext 生成字幕画面。
+        // 纯色底 + 分镜标题 + brief/画面描述，让产物能反映需求文本而非单纯占位。
+        const shotInfo = analysis?.shots[i];
+        const text = shotInfo?.description || ctx.brief || `第 ${i + 1} 个镜头`;
+        const onScreen = shotInfo?.onScreenText;
+        // 中文字体：GHA 装了 fonts-noto-cjk；本地 macOS/其他平台各自探测，找不到就用默认字体（英文 fallback）
+        const fontfiles = [
+          '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+          '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+          '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+          '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+          '/System/Library/Fonts/PingFang.ttc',
+          'C:/Windows/Fonts/msyh.ttc',
+        ];
+        let fontfile: string | undefined;
+        for (const f of fontfiles) {
+          if (await fileExists(f)) {
+            fontfile = f;
+            break;
+          }
+        }
+        const fontArg = fontfile ? `:fontfile=${fontfile.replace(/:/g, '\\:')}` : '';
+        const esc = (s: string) =>
+          s.replace(/'/g, "'\\''").replace(/\n/g, ' ').replace(/\r/g, ' ').slice(0, 200);
+        const drawtexts = [
+          `drawtext=text='${esc(text)}':fontcolor=white:fontsize=44:x=(w-text_w)/2:y=h/2-60${fontArg}`,
+          ...(onScreen
+            ? [`drawtext=text='${esc(onScreen)}':fontcolor=yellow:fontsize=36:x=(w-text_w)/2:y=h/2+40${fontArg}`]
+            : []),
+          `drawtext=text='${i + 1}':fontcolor=white@0.4:fontsize=120:x=w-180:y=h-180${fontArg}`,
+        ];
         await ffmpeg(ctx.taskId, [
           '-f', 'lavfi', '-i', 'color=c=0x10216e:s=1280x720:r=24',
-          '-vf', `drawtext=text='Shot ${i + 1}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2`,
+          '-vf', drawtexts.join(','),
           '-t', String(seconds), '-r', '24', '-pix_fmt', 'yuv420p', '-y', dest,
         ]);
         art.clipPaths[i] = dest;
         ctx.checkpoint.completedShots.push(i);
         ctx.onCheckpoint?.(ctx.checkpoint);
-        log.info('shot generated (code)', { index: i, seconds });
+        log.info('shot generated (code)', { index: i, seconds, text: text.slice(0, 40), font: fontfile });
         continue;
       }
       // 抽帧按 analysis.shots 的 index 落盘，这里把生成序号映射回原始分镜序号

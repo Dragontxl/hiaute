@@ -72,10 +72,12 @@ jobs:
       - name: Install ffmpeg and yt-dlp
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-noto-cjk
           sudo curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
           sudo chmod a+rx /usr/local/bin/yt-dlp
           yt-dlp --version
+          echo "== CJK font available =="
+          fc-list | grep -iE 'cjk|noto.*sc|wqy|zenhei' || true
 
       # --- 模型缓存（§8.3：跨运行复用 4–6GB 模型，避免每次重下）---
       - name: Restore model cache
