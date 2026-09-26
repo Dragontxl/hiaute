@@ -45,6 +45,7 @@ function buildSchemas(cfg: AppConfig) {
       maxDurationSeconds: z.number().int().min(1).max(cfg.maxDurationSeconds),
       maxShots: z.number().int().min(1).max(200),
       outputResolution: z.enum(['480p', '720p', '1080p'] as const),
+      renderMode: z.enum(['llm', 'code'] as const),
       runFile: z.string().max(512).regex(RUN_FILE_RE),
     })
     .partial();
@@ -108,14 +109,13 @@ async function tryDispatch(
   referenceUrl: string,
   maxDurationSeconds: number,
   taskDir?: string,
-  brief?: string,
 ): Promise<'skipped' | 'ok' | 'failed'> {
   if (!cfg.github) {
     log.warn('github dispatch skipped: GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO not configured', { taskId });
     return 'skipped';
   }
   try {
-    await dispatchTask(cfg.github, { taskId, ...(taskDir ? { taskDir } : {}), ...(brief ? { brief } : {}), referenceUrl, maxDurationSeconds });
+    await dispatchTask(cfg.github, { taskId, ...(taskDir ? { taskDir } : {}), referenceUrl, maxDurationSeconds });
     await storage.tasks.markStatus(taskId, 'DISPATCHED');
     return 'ok';
   } catch (err) {
@@ -228,12 +228,11 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       ...(b.name ? { name: b.name } : {}),
       ...(b.referenceUrl ? { referenceUrl: b.referenceUrl } : {}),
       ...(b.runFile ? { runFile: b.runFile } : {}),
-      ...(b.brief ? { brief: b.brief } : {}),
       maxDurationSeconds: b.maxDurationSeconds ?? cfg.maxDurationSeconds,
       normalizeSize: cfg.normalizeSize,
       outputResolution: b.outputResolution ?? cfg.outputResolution,
     });
-    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, artifactDirName(task.name, task.id, task.createdAt), task.brief);
+    await tryDispatch(cfg, storage, task.id, task.referenceUrl ?? '', task.maxDurationSeconds, artifactDirName(task.name, task.id, task.createdAt));
     const created = await storage.tasks.get(task.id);
     // 派发失败：与旧行为一致返回 502，便于前端明确感知
     if (created?.status === 'FAILED' && created.error) {
@@ -262,7 +261,7 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     if (t.status !== 'PENDING' && t.status !== 'FAILED' && t.status !== 'PAUSED') {
       return c.json({ error: 'not retryable', detail: `status ${t.status} 不支持重试（仅 PENDING/FAILED/PAUSED）` }, 409);
     }
-    const r = await tryDispatch(cfg, storage, id, t.referenceUrl ?? '', t.maxDurationSeconds, artifactDirName(t.name, id, t.createdAt), t.brief);
+    const r = await tryDispatch(cfg, storage, id, t.referenceUrl ?? '', t.maxDurationSeconds, artifactDirName(t.name, id, t.createdAt));
     if (r === 'skipped') {
       return c.json(
         { error: 'dispatch unavailable', detail: '未配置 GITHUB_PAT/GITHUB_OWNER/GITHUB_REPO，无法派发（请先配置 worker secret）' },
