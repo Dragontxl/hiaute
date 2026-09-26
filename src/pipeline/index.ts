@@ -15,7 +15,7 @@
  */
 import { execFile } from 'node:child_process';
 import { access, copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { log } from '../core/logger.js';
 import { STAGE_ORDER } from '../types/index.js';
@@ -47,6 +47,8 @@ export interface PipelineContext {
   referenceUrl?: string;
   /** 需求文本（写入 SVML 的 brief）。 */
   brief?: string;
+  /** 渲染模式：llm 生成画面 / code 代码确定性渲染。 */
+  renderMode?: 'llm' | 'code';
   maxDurationSeconds: number;
   normalizeSize: number;
   outputResolution: '480p' | '720p' | '1080p';
@@ -312,6 +314,18 @@ export class Pipeline {
         continue;
       }
       const seconds = durations[i]!;
+      if (ctx.renderMode === 'code') {
+        await ffmpeg(ctx.taskId, [
+          '-f', 'lavfi', '-i', 'color=c=0x10216e:s=1280x720:r=24',
+          '-vf', `drawtext=text='Shot ${{i + 1}':fontcolor=white:fontsize=36:x=(w-text_w)/2:y=(h-text_h)/2`,
+          '-t', String(seconds), '-r', '24', '-pix_fmt', 'yuv420p', '-y', dest,
+        ]);
+        art.clipPaths[i] = dest;
+        ctx.checkpoint.completedShots.push(i);
+        ctx.onCheckpoint?.(ctx.checkpoint);
+        log.info('shot generated (code)', { index: i, seconds });
+        continue;
+      }
       // 抽帧按 analysis.shots 的 index 落盘，这里把生成序号映射回原始分镜序号
       const framePath = art.framePaths[analysis?.shots[i]?.index ?? -1];
 
@@ -366,7 +380,7 @@ export class Pipeline {
         }
       } else {
         const listPath = join(dirs.outputs, 'concat.txt');
-        await writeFile(listPath, clips.map((c) => 'file ' + basename(c)).join('\n') + '\n');
+        await writeFile(listPath, clips.map((c) => `file '${c.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
         await ffmpeg(ctx.taskId, ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-y', finalPath]);
       }
     } catch (err) {
