@@ -21,6 +21,8 @@ export interface DispatchPayload {
   taskId: string;
   /** R2 产物目录名（如 `中秋节2026_202601010000`），用作前缀 tasks/<taskDir>/。 */
   taskDir?: string;
+  /** brief */
+  brief?: string;
   referenceUrl: string;
   maxDurationSeconds: number;
 }
@@ -44,6 +46,7 @@ export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload
       client_payload: {
         taskId: payload.taskId,
         taskDir: payload.taskDir ?? '',
+        brief: payload.brief ?? '',
         referenceUrl: payload.referenceUrl,
         maxDurationSeconds: payload.maxDurationSeconds,
         callbackUrl: cfg.callbackUrl,
