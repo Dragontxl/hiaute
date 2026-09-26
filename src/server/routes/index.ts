@@ -26,6 +26,7 @@ import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
 import { parseCheckpoint } from '../../storage/merge.js';
+import { artifactDirName } from '../../storage/taskName.js';
 import type { StorageBundle } from '../../storage/types.js';
 import type { AppConfig } from '../../types/index.js';
 
