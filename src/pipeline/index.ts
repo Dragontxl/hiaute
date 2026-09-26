@@ -15,7 +15,7 @@
  */
 import { execFile } from 'node:child_process';
 import { access, copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { log } from '../core/logger.js';
 import { STAGE_ORDER } from '../types/index.js';
@@ -365,7 +365,7 @@ export class Pipeline {
       art.clipPaths = await scanClips(dirs.outputs);
       clips = art.clipPaths.filter((p): p is string => Boolean(p));
     }
-    log.info('compose clips', { clipCount: clips.length, clips });
+    log.info('compose clips', { clipCount: clips.length });
     if (clips.length === 0) {
       log.warn('COMPOSE skipped: no generated clips');
       return undefined;
@@ -381,7 +381,10 @@ export class Pipeline {
         }
       } else {
         const listPath = join(dirs.outputs, 'concat.txt');
-        await writeFile(listPath, clips.map((c) => `file '${c.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
+        // 使用绝对路径写入 concat.txt：ffmpeg 的 concat demuxer 会把 file 条目解析为
+        // 相对于 concat.txt 所在目录的路径，若条目本身已是相对路径则会被再次拼接导致路径翻倍。
+        const absClips = clips.map(c => resolve(c));
+        await writeFile(listPath, absClips.map((c) => `file '${c.replace(/'/g, "'\\''")}'`).join('\n') + '\n');
         await ffmpeg(ctx.taskId, ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-y', finalPath]);
       }
     } catch (err) {
