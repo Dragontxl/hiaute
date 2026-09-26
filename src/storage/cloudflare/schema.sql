@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   normalize_size       INTEGER NOT NULL,
   output_resolution    TEXT NOT NULL,               -- 480p|720p|1080p
   render_mode          TEXT,                        -- llm|code（code = ffmpeg 确定性渲染，不耗模型）
+  brief                TEXT,                        -- 任务需求文本（无参考视频时按此自由生成）
   run_file             TEXT,                        -- Studio 编辑用 Run Source
   error                TEXT,
   checkpoint           TEXT,                        -- JSON: TaskCheckpoint

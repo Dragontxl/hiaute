@@ -102,6 +102,8 @@ export interface TaskRecord {
   outputResolution: '480p' | '720p' | '1080p';
   /** 渲染模式：llm 大模型生成画面 / code ffmpeg 确定性渲染。 */
   renderMode?: 'llm' | 'code';
+  /** 任务需求文本（无参考视频时按 brief 自由生成；持久化到 D1 供断点重派）。 */
+  brief?: string;
   /** Studio 编辑用的 Run Source（可选；启动编辑会话时写入，如 runs/main.svrun）。 */
   runFile?: string;
   createdAt: number;

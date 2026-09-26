@@ -47,6 +47,8 @@ export class MemoryTaskRepository implements TaskRepository {
       status: 'PENDING',
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
+      ...(input.renderMode ? { renderMode: input.renderMode } : {}),
+      ...(input.brief ? { brief: input.brief } : {}),
       ...(input.runFile ? { runFile: input.runFile } : {}),
       maxDurationSeconds: input.maxDurationSeconds,
       normalizeSize: input.normalizeSize,

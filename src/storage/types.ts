@@ -77,6 +77,8 @@ export interface TaskCreateInput {
   outputResolution: '480p' | '720p' | '1080p';
   /** 渲染模式：llm 大模型生成 / code ffmpeg 确定性渲染。 */
   renderMode?: 'llm' | 'code';
+  /** 任务需求文本（写入 SVML 的 brief；无参考视频时自由创作）。 */
+  brief?: string;
   runFile?: string;
 }
 

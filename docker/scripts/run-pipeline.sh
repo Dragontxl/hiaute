@@ -11,6 +11,8 @@ cd "$(dirname "$0")/../.." # 到项目根
 # --- 任务参数（应用侧读 TASK_* 前缀；REFERENCE_URL 为旧别名，向后兼容）---
 export TASK_ID="${TASK_ID:-gha-$(date +%s)}"
 export TASK_REFERENCE_URL="${TASK_REFERENCE_URL:-${REFERENCE_URL:-}}"
+export TASK_BRIEF="${TASK_BRIEF:-}"                # 任务需求文本（无参考视频时按此自由生成）
+export RENDER_MODE="${RENDER_MODE:-}"              # llm|code（code = ffmpeg 确定性渲染）
 export NORMALIZE_SIZE="${NORMALIZE_SIZE:-512}"            # §8.4 抽帧归一化降档
 export MAX_DURATION_SECONDS="${MAX_DURATION_SECONDS:-1800}" # §8.4 限时长（主杠杆）
 export MAX_SHOTS="${MAX_SHOTS:-10}"                       # 分镜条数上限（成本控制）

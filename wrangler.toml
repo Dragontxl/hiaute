@@ -46,7 +46,9 @@ MAX_SHOTS = "10"
 NORMALIZE_SIZE = "512"
 OUTPUT_RESOLUTION = "720p"
 # 控制面自身的回调地址（派发给 GHA 的任务完成后回写状态）
+# 用自定义域名（国内可达、且绑定到本 worker 的当前 bundle）；
+# workers.dev 子域名在本账户未显式绑定，GHA 回调用它会 404。
 # 部署后通过 CF Dashboard → Variables 设置 HYPITAPP_MASTER_KEY 和 HYPITAPP_CALLBACK_SECRET
-HYPITAPP_CALLBACK_URL = "https://hypitapp.goodluckjiachen.workers.dev/api/v1/callback/github"
+HYPITAPP_CALLBACK_URL = "https://hypitapp.ygtxl.dpdns.org/api/v1/callback/github"
 # R2 公开前缀（绑定 R2 后再填）
 # R2_PUBLIC_URL = "https://objects.example.com"

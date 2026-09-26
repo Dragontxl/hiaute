@@ -22,6 +22,10 @@ export interface DispatchPayload {
   /** R2 产物目录名（如 `中秋节2026_202601010000`），用作前缀 tasks/<taskDir>/。 */
   taskDir?: string;
   referenceUrl: string;
+  /** 任务需求文本，供流水线按 brief 自由生成。 */
+  brief?: string;
+  /** 渲染模式：llm 大模型生成 / code ffmpeg 确定性渲染。 */
+  renderMode?: 'llm' | 'code';
   maxDurationSeconds: number;
 }
 
@@ -45,6 +49,8 @@ export async function dispatchTask(cfg: DispatchConfig, payload: DispatchPayload
         taskId: payload.taskId,
         taskDir: payload.taskDir ?? '',
         referenceUrl: payload.referenceUrl,
+        ...(payload.brief ? { brief: payload.brief } : {}),
+        ...(payload.renderMode ? { renderMode: payload.renderMode } : {}),
         maxDurationSeconds: payload.maxDurationSeconds,
         callbackUrl: cfg.callbackUrl,
       },

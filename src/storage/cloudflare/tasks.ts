@@ -25,6 +25,7 @@ interface TaskRow {
   normalize_size: number;
   output_resolution: string;
   render_mode: string | null;
+  brief: string | null;
   run_file: string | null;
   error: string | null;
   checkpoint: string | null;
@@ -44,10 +45,11 @@ function rowToTask(r: TaskRow): TaskRecord {
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
-  if (r.name) task.name = r.name;
-  if (r.reference_url) task.referenceUrl = r.reference_url;
-  if (r.render_mode) task.renderMode = r.render_mode as 'llm' | 'code';
-  if (r.run_file) task.runFile = r.run_file;
+    if (r.name) task.name = r.name;
+    if (r.reference_url) task.referenceUrl = r.reference_url;
+    if (r.render_mode) task.renderMode = r.render_mode as 'llm' | 'code';
+    if (r.brief) task.brief = r.brief;
+    if (r.run_file) task.runFile = r.run_file;
   if (r.error) task.error = r.error;
   if (r.completed_at) task.completedAt = r.completed_at;
   if (r.checkpoint) {
@@ -72,8 +74,8 @@ export class D1TaskRepository implements TaskRepository {
     await this.db
       .prepare(
         `INSERT INTO tasks
-          (id, name, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, render_mode, run_file, checkpoint, created_at, updated_at)
-         VALUES (?, ?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, name, status, stage, reference_url, max_duration_seconds, normalize_size, output_resolution, render_mode, brief, run_file, checkpoint, created_at, updated_at)
+         VALUES (?, ?, 'PENDING', 'DETECT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         id,
@@ -83,6 +85,7 @@ export class D1TaskRepository implements TaskRepository {
         input.normalizeSize,
         input.outputResolution,
         input.renderMode ?? null,
+        input.brief ?? null,
         input.runFile ?? null,
         JSON.stringify(checkpoint),
         now,
@@ -96,6 +99,7 @@ export class D1TaskRepository implements TaskRepository {
       stage: 'DETECT',
       ...(input.referenceUrl ? { referenceUrl: input.referenceUrl } : {}),
       ...(input.renderMode ? { renderMode: input.renderMode } : {}),
+      ...(input.brief ? { brief: input.brief } : {}),
       ...(input.runFile ? { runFile: input.runFile } : {}),
       maxDurationSeconds: input.maxDurationSeconds,
       normalizeSize: input.normalizeSize,
@@ -174,7 +178,7 @@ export class D1TaskRepository implements TaskRepository {
       .prepare(
         `UPDATE tasks SET
             name = ?, status = ?, stage = ?, reference_url = ?, max_duration_seconds = ?, normalize_size = ?,
-            output_resolution = ?, render_mode = ?, run_file = ?, error = ?, checkpoint = ?, completed_at = ?, updated_at = ?
+            output_resolution = ?, render_mode = ?, brief = ?, run_file = ?, error = ?, checkpoint = ?, completed_at = ?, updated_at = ?
           WHERE id = ?`,
       )
       .bind(
@@ -186,6 +190,7 @@ export class D1TaskRepository implements TaskRepository {
         t.normalizeSize,
         t.outputResolution,
         (t as { renderMode?: string }).renderMode ?? null,
+        t.brief ?? null,
         t.runFile ?? null,
         t.error ?? null,
         JSON.stringify(t.checkpoint ?? null),
