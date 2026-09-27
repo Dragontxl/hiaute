@@ -169,14 +169,22 @@ ${areaLines.join('\n')}
   await opts.kernel.check(svmlPath);
   await opts.kernel.plan(runPath);
 
-  // 渲染并取回产物
+  // 渲染并取回产物（写到 outputs/，与 ffmpeg 兜底路径一致，供 run-pipeline.sh 上传 R2）
   const buildId = await opts.kernel.build(runPath, { title: `task-${opts.videoKey.split('/')[1] ?? 'render'}`, maxWaitMs: 20 * 60_000 });
-  const finalPath = join(workDir, 'final.mp4');
+  const finalPath = join(workDir, 'outputs', 'final.mp4');
+  await mkdir(join(workDir, 'outputs'), { recursive: true });
   await opts.kernel.get(buildId, 'final.video', finalPath);
 
-  // 上传到对象存储（R2 / FS）
-  const url = await opts.store.put(opts.videoKey, await readFile(finalPath), 'video/mp4');
-  log.info('hypit render uploaded', { videoKey: opts.videoKey, url, buildId });
+  // 对象存储上传：GHA 上 store 是本地 FS，产物由 run-pipeline.sh 统一传 R2；
+  // 仅当 store 是远程对象存储（put 返回 http url）时才在此上传。
+  const probe = await opts.store.put(`__probe__/${Date.now()}`, new Uint8Array(1), 'application/octet-stream');
+  const isRemote = /^https?:\/\//i.test(probe);
+  if (isRemote) {
+    const url = await opts.store.put(opts.videoKey, await readFile(finalPath), 'video/mp4');
+    log.info('hypit render uploaded (remote store)', { videoKey: opts.videoKey, url, buildId });
+  } else {
+    log.info('hypit render done; local store, output left for R2 upload', { finalPath, buildId });
+  }
 
   return { finalPath, videoKey: opts.videoKey, buildId };
 }
