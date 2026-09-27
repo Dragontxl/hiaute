@@ -81,6 +81,43 @@ export interface DownloadOptions {
   signal?: AbortSignal;
 }
 
+/** 去掉常见跟踪参数（B 站 spm_id_from/vd_source 等），减少被风控 412 的概率。保留 p= 等必要参数。 */
+function stripTrackingParams(url: string): string {
+  try {
+    const u = new URL(url);
+    const drop = [
+      'spm_id_from', 'vd_source', 'from_source', 'from_spmid', 'share_source', 'share_medium',
+      'share_plat', 'share_tag', 'share_session_id', 'timestamp', 'unique_k', 'seid', 'bbid',
+      'ts', 'up_id', 'msource', 'tab', 'spmid', 'broadcast_type',
+    ];
+    for (const k of drop) u.searchParams.delete(k);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * 可选 cookies：B 站等站点对海外数据中心 IP 风控严格（HTTP 412），仅靠请求头常不够。
+ * 通过环境变量提供 Netscape 格式 cookie（明文或 base64）即可绕过：
+ *   HYPIT_YTDLP_COOKIES       （明文）
+ *   HYPIT_YTDLP_COOKIES_B64   （base64，便于放进 Secret）
+ */
+async function cookieArgs(work: string): Promise<string[]> {
+  const b64 = process.env.HYPIT_YTDLP_COOKIES_B64;
+  const plain = process.env.HYPIT_YTDLP_COOKIES;
+  if (!b64 && !plain) return [];
+  try {
+    const content = b64 ? Buffer.from(b64, 'base64').toString('utf8') : (plain as string);
+    const p = join(work, 'cookies.txt');
+    await writeFile(p, content, 'utf8');
+    return ['--cookies', p];
+  } catch (err) {
+    log.warn('failed to prepare yt-dlp cookies; continuing without', { err: String(err) });
+    return [];
+  }
+}
+
 /** 用 yt-dlp 下载并转封装到目标文件；返回字节数。 */
 async function downloadViaYtDlp(binary: string, url: string, dest: string, opts: DownloadOptions): Promise<number> {
   const container = (extname(dest).slice(1).toLowerCase() || 'mp4');
@@ -88,6 +125,7 @@ async function downloadViaYtDlp(binary: string, url: string, dest: string, opts:
   const finalContainer = allowed.includes(container) ? container : 'mp4';
   const work = await mkdtemp(join(tmpdir(), 'hypit-fetch-'));
   try {
+    const extra = await cookieArgs(work);
     try {
       await run(
         binary,
@@ -99,6 +137,7 @@ async function downloadViaYtDlp(binary: string, url: string, dest: string, opts:
           '--no-playlist',
           '--no-progress',
           '--quiet',
+          ...extra,
           '--format',
           'bv*+ba/b',
           '--merge-output-format',
@@ -107,7 +146,7 @@ async function downloadViaYtDlp(binary: string, url: string, dest: string, opts:
           'res:1080,vcodec:h264',
           '--output',
           join(work, 'video.%(ext)s'),
-          url,
+          stripTrackingParams(url),
         ],
         {
           timeout: opts.timeoutMs ?? 15 * 60_000,

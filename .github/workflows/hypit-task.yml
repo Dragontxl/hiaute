@@ -54,6 +54,8 @@ jobs:
       HYPIT_AGNES_3_KEY: ${{ secrets.HYPIT_AGNES_3_KEY }}
       HYPIT_AGNES_4_KEY: ${{ secrets.HYPIT_AGNES_4_KEY }}
       HYPIT_AGNES_5_KEY: ${{ secrets.HYPIT_AGNES_5_KEY }}
+      # 可选：B 站等站点风控（HTTP 412）用的 Netscape cookie（base64）。未配置则为空，正常跳过。
+      HYPIT_YTDLP_COOKIES_B64: ${{ secrets.HYPIT_YTDLP_COOKIES_B64 }}
 
     steps:
       - uses: actions/checkout@v4
