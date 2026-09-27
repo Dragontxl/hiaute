@@ -24,6 +24,8 @@ import type { StorageBundle } from '../../storage/types.js';
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
 const MAX_CHUNK_SIZE = 50 * 1024 * 1024; // 50MB per chunk
 
+export { MAX_FILE_SIZE, MAX_CHUNK_SIZE };
+
 /* ---------------- key 校验 ---------------- */
 
 /** 文件 key 白名单：允许字母数字、下划线、连字符、点、斜杠、中文等；拒绝 .. 逃逸。 */

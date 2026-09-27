@@ -22,6 +22,7 @@ import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import { z } from 'zod';
 import { dispatchTask } from '../dispatch.js';
 import { buildFileRoutes, safeKey, mimeFromKey } from './files.js';
+import { MAX_CHUNK_SIZE, MAX_FILE_SIZE } from './files.js';
 import { verifyPayloadSignature, safeEqual } from '../../core/crypto.js';
 import { log } from '../../core/logger.js';
 import { RUN_FILE_RE, StudioManager } from '../../kernel/studio.js';
@@ -211,7 +212,9 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     const prefixField = form.get('prefix');
     const taskId = typeof taskIdRaw === 'string' ? taskIdRaw : '';
     const prefixRaw = typeof prefixField === 'string' ? prefixField : '';
-    const filename = file.name || 'artifact.bin';
+    // fileName 允许显式指定真实文件名（分片时 multipart file 名带序号，须覆盖回原名）
+    const fileNameField = form.get('fileName');
+    const filename = (typeof fileNameField === 'string' && fileNameField.trim() !== '') ? fileNameField : (file.name || 'artifact.bin');
     const canonical = `artifact:${taskId}:${prefixRaw}:${filename}`;
     if (!verifyPayloadSignature(canonical, cfg.callbackSecret, c.req.header('x-callback-signature') ?? '')) {
       log.warn('artifact signature mismatch', { taskId, filename });
@@ -221,8 +224,57 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
     if (prefix === null) return c.json({ error: 'invalid prefix' }, 400);
     const key = safeKey(`${prefix}${filename}`);
     if (key === null) return c.json({ error: 'invalid filename' }, 400);
-    const buf = await file.arrayBuffer();
     const contentType = file.type && file.type !== 'application/octet-stream' ? file.type : mimeFromKey(key);
+
+    const chunkIdxVal = form.get('chunk');
+    const totalChunksVal = form.get('totalChunks');
+
+    // 分片上传：缓存各片，最后一片合并写 R2（兼容大 final.mp4 超出 worker 单请求体上限）
+    if (chunkIdxVal !== null && totalChunksVal !== null) {
+      const idx = parseInt(typeof chunkIdxVal === 'string' ? chunkIdxVal : 'NaN', 10);
+      const total = parseInt(typeof totalChunksVal === 'string' ? totalChunksVal : 'NaN', 10);
+      if (isNaN(idx) || isNaN(total) || idx < 0 || total < 1 || idx >= total) {
+        return c.json({ error: 'invalid chunk parameters' }, 400);
+      }
+      const buf = await file.arrayBuffer();
+      if (buf.byteLength > MAX_CHUNK_SIZE) {
+        return c.json({ error: 'chunk too large', detail: `max ${MAX_CHUNK_SIZE} bytes` }, 413);
+      }
+      const chunkKey = `chunk:${key}:${idx}`;
+      await storage.objects.put(chunkKey, buf, 'application/octet-stream');
+
+      if (idx === total - 1) {
+        const chunksToMerge: ArrayBuffer[] = [];
+        for (let i = 0; i < total; i += 1) {
+          const ck = `chunk:${key}:${i}`;
+          const body = await storage.objects.get(ck);
+          if (!body) {
+            return c.json({ error: 'missing chunk', detail: `chunk ${i} not found` }, 400);
+          }
+          chunksToMerge.push(await body.arrayBuffer());
+        }
+        const totalSize = chunksToMerge.reduce((s, b) => s + b.byteLength, 0);
+        if (totalSize > MAX_FILE_SIZE) {
+          return c.json({ error: 'file too large', detail: `max ${MAX_FILE_SIZE} bytes` }, 413);
+        }
+        const merged = new Uint8Array(totalSize);
+        let offset = 0;
+        for (let i = 0; i < chunksToMerge.length; i += 1) {
+          const chunk = chunksToMerge[i];
+          if (!chunk) continue;
+          merged.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
+          await storage.objects.delete(`chunk:${key}:${i}`);
+        }
+        await storage.objects.put(key, merged.buffer, contentType);
+        log.info('artifact uploaded to R2 (merged)', { key, bytes: totalSize, chunks: total });
+        return c.json({ key, size: totalSize, contentType, chunks: chunksToMerge.length, merged: true }, 201);
+      }
+      log.debug('artifact chunk cached', { key, chunk: idx, total, bytes: buf.byteLength });
+      return c.json({ key, chunk: idx, total, received: buf.byteLength }, 201);
+    }
+
+    const buf = await file.arrayBuffer();
     await storage.objects.put(key, buf, contentType);
     log.info('artifact uploaded to R2', { key, bytes: buf.byteLength });
     return c.json({ key, size: buf.byteLength }, 201);

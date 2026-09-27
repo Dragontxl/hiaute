@@ -208,6 +208,39 @@ describe('产物上传回调 /api/v1/callback/artifact', () => {
     }));
     assert.equal(res.status, 400);
   });
+
+  it('分片上传大文件后自动合并写入对象存储', async () => {
+    const storage = createMemoryStorage();
+    const app = buildRoutes(BASE_CFG, storage);
+    // 构造 3 片内容，等价于一次分片上传（fileName 覆盖原名，chunk 分片）
+    const original = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120]);
+    const chunkSize = 5;
+    const total = Math.ceil(original.length / chunkSize);
+    for (let i = 0; i < total; i += 1) {
+      const chunk = new Uint8Array(original.slice(i * chunkSize, (i + 1) * chunkSize));
+      const fd = new FormData();
+      fd.append('taskId', 't1');
+      fd.append('prefix', 'tasks/t1/');
+      // fileName 保持原名 final.mp4；file 名带序号
+      fd.append('fileName', 'final.mp4');
+      fd.append('chunk', String(i));
+      fd.append('totalChunks', String(total));
+      fd.append('file', new File([chunk], `part.${i}`, { type: 'application/octet-stream' }));
+      const canonical = 'artifact:t1:tasks/t1/:final.mp4';
+      const sig = signPayload(canonical, BASE_CFG.callbackSecret);
+      const res = await app.fetch(new Request('http://localhost/api/v1/callback/artifact', {
+        method: 'POST',
+        body: fd,
+        headers: { 'x-callback-signature': sig },
+      }));
+      assert.equal(res.status, 201, `chunk ${i} 应 201`);
+    }
+    // 校验合并后对象内容与原数据一致
+    const body = await storage.objects.get('tasks/t1/final.mp4');
+    assert.ok(body, '合并后的 final.mp4 应存在');
+    const buf = new Uint8Array(await body!.arrayBuffer());
+    assert.deepEqual(Array.from(buf), Array.from(original), '合并内容应与原数据一致');
+  });
 });
 
 describe('删除任务（级联删除产物目录）', () => {

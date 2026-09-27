@@ -79,13 +79,59 @@ upload_artifact() {
   local name sig code
   name="$(basename "$src")"
   # 签名口径与控制面 core/crypto.ts signPayload 一致：sha256(secret + "." + canonical)
-  # canonical = artifact:<taskId>:<prefix>:<filename>
+  # canonical = artifact:<taskId>:<prefix>:<filename>（filename 用 fileName 字段原名，分片时不变）
   sig=$(HYPITAPP_TASK="$TASK_ID" HYPITAPP_PREFIX="$prefix" HYPITAPP_FILENAME="$name" python3 -c "import hashlib,os; s=os.environ.get('HYPITAPP_CALLBACK_SECRET',''); c='artifact:'+os.environ['HYPITAPP_TASK']+':'+os.environ['HYPITAPP_PREFIX']+':'+os.environ['HYPITAPP_FILENAME']; print(hashlib.sha256((s+'.'+c).encode()).hexdigest())")
+
+  # 大于 50MB 走分片上传（控制面 callback/artifact 支持 chunk 合并）；
+  # 否则单请求直传。分片每片 50MB，低于 Cloudflare Worker 单请求体上限(100MB)。
+  local size chunk_bytes total
+  size=$(stat -c%s "$src" 2>/dev/null || echo 0)
+  chunk_bytes=$((50 * 1024 * 1024))
+  total=$(( (size + chunk_bytes - 1) / chunk_bytes ))
+  [[ "$total" -lt 1 ]] && total=1
+
+  if [[ "$size" -gt "$chunk_bytes" ]]; then
+    local tmp idx code i
+    tmp=$(mktemp -d)
+    # split -b 按字节精确切分（50MB/片），二进制 mp4 安全
+    split -b "$chunk_bytes" -d -a 4 "$src" "$tmp/part."
+    local parts
+    parts=("$tmp"/part.*)
+    total=${#parts[@]}
+    idx=0
+    code=000
+    for part in "${parts[@]}"; do
+      code=$(curl -sS --max-time 300 -o /dev/null -w '%{http_code}' \
+        -X POST "$CONTROL_BASE/api/v1/callback/artifact" \
+        -H "x-callback-signature: $sig" \
+        -F "taskId=$TASK_ID" \
+        -F "prefix=$prefix" \
+        -F "fileName=$name" \
+        -F "chunk=$idx" \
+        -F "totalChunks=$total" \
+        -F "file=@$part" || echo "000")
+      if [[ "$code" != "201" ]]; then
+        echo "chunk upload failed (http $code): $src part $idx/$total"
+        rm -rf "$tmp"
+        return 0
+      fi
+      idx=$((idx + 1))
+    done
+    rm -rf "$tmp"
+    if [[ "$code" == "201" ]]; then
+      echo "uploaded (chunked ${total}x) -> ${prefix}${name}"
+    else
+      echo "upload failed (http $code): $src"
+    fi
+    return 0
+  fi
+
   code=$(curl -sS --max-time 300 -o /dev/null -w '%{http_code}' \
     -X POST "$CONTROL_BASE/api/v1/callback/artifact" \
     -H "x-callback-signature: $sig" \
     -F "taskId=$TASK_ID" \
     -F "prefix=$prefix" \
+    -F "fileName=$name" \
     -F "file=@$src" || echo "000")
   if [[ "$code" == "201" ]]; then
     echo "uploaded -> ${prefix}${name}"
