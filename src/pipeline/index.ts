@@ -274,7 +274,10 @@ export class Pipeline {
     const cap = ctx.providers.agnesVideo.capabilities.maxSecondsPerShot ?? 12;
     // 目标总时长：优先对齐参考视频实际时长；自由创作/时长未知时保守取 maxShots*cap
     // （避免无参考时长时回落成 maxDurationSeconds=180 → 分镜数暴涨 → 成本失控）
-    const freeformTarget = ctx.maxShots * cap;
+    // code 模式为图形动画短片：总时长压到 CONTENT_SECONDS（15-25s），每镜 3-4s，
+    // 既保证观感（不冗长）又控制 HyperFrames CPU 渲染时间（每帧软渲染约 1s）。
+    const CODE_TARGET_SECONDS = Math.min(Number(process.env.CODE_TARGET_SECONDS ?? 24), ctx.maxDurationSeconds);
+    const freeformTarget = ctx.renderMode === 'code' ? CODE_TARGET_SECONDS : ctx.maxShots * cap;
     const targetSeconds = Math.min(art.referenceSeconds ?? freeformTarget, ctx.maxDurationSeconds);
     const durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: ctx.maxShots });
 
