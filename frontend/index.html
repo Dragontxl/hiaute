@@ -217,7 +217,8 @@
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
-    /** 任务详情弹窗：展示任务创建时的全部参数与当前进度。 */
+    /** 任务详情弹窗：展示任务创建时的全部参数与当前进度，并支持复用参数新建。 */
+    let currentDetailTask = null;
     async function showTaskDetail(id) {
       const modal = document.getElementById('detailModal');
       const title = document.getElementById('detailTitle');
@@ -225,10 +226,12 @@
       title.textContent = '任务详情';
       body.innerHTML = '<p class="muted">加载中…</p>';
       modal.classList.add('active');
+      currentDetailTask = null;
       try {
         const res = await api('/api/v1/tasks/' + id);
         if (!res.ok) throw new Error(await res.text());
         const t = await res.json();
+        currentDetailTask = t;
         const renderModeLabel = t.renderMode === 'code' ? '代码生成（确定性渲染）' : (t.renderMode === 'llm' ? '大模型生成（画面由 AI 生成）' : '—');
         const rows = [
           ['任务 ID', t.id],
@@ -248,10 +251,31 @@
         const table = rows.map(([k, v]) =>
           '<tr><th style="width:110px;text-align:right;color:#888;font-weight:500;vertical-align:top">' + escapeHtml(String(k)) +
           '</th><td style="word-break:break-all">' + escapeHtml(String(v)) + '</td></tr>').join('');
-        body.innerHTML = '<table style="width:100%">' + table + '</table>';
+        body.innerHTML = '<table style="width:100%">' + table + '</table>' +
+          '<div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button id="detailReuse" style="background:#059669">复用此参数新建</button>' +
+          '<button id="detailClose2" style="background:#6b7280">关闭</button></div>';
+        document.getElementById('detailReuse').addEventListener('click', reuseAsNewTask);
+        document.getElementById('detailClose2').addEventListener('click', () => modal.classList.remove('active'));
       } catch (e) {
         body.innerHTML = '<p style="color:#dc2626">加载失败：' + escapeHtml(e.message) + '</p>';
       }
+    }
+
+    /** 用任务详情里的参数填充“新建任务”表单，便于快速复用创建新任务。 */
+    function reuseAsNewTask() {
+      const t = currentDetailTask;
+      if (!t) return;
+      document.getElementById('taskName').value = t.name ? (t.name + '-副本') : '';
+      document.getElementById('brief').value = t.brief || '';
+      document.getElementById('ref').value = t.referenceUrl || '';
+      if (t.maxDurationSeconds != null) document.getElementById('dur').value = t.maxDurationSeconds;
+      if (t.outputResolution) document.getElementById('res').value = t.outputResolution;
+      document.getElementById('renderMode').value = t.renderMode === 'code' ? 'code' : 'llm';
+      document.getElementById('detailModal').classList.remove('active');
+      const card = document.getElementById('taskName').closest('.card') || document.body;
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('taskName').focus();
     }
 
     document.getElementById('detailClose').addEventListener('click', () => document.getElementById('detailModal').classList.remove('active'));
