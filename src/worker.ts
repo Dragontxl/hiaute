@@ -767,22 +767,35 @@ const FRONTEND_HTML = `<!doctype html>
       updateUploadItem(itemId, 100, '完成');
     }
 
-    // 下载
-    async function downloadFile(key) {
-      try {
-        fmStatus('下载中…');
-        const res = await api('/api/v1/files/download?key=' + encodeURIComponent(key));
-        if (!res.ok) throw new Error(await res.text());
-        const blob = await res.blob();
-        const name = key.split('/').pop() || 'download';
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = name;
-        document.body.appendChild(a); a.click(); a.remove();
-        URL.revokeObjectURL(url);
-        fmStatus('下载完成');
-      } catch (e) { alert('下载失败：' + e.message); }
-    }
+// 下载
+async function downloadFile(key) {
+  const name = key.split('/').pop() || 'download';
+  // 优先用 R2 直链原生下载（浏览器直接下载跨域资源，无 CORS/fetch 问题）；
+  // 后端 /download 也会 302 到直链，但 fetch 跨域会被拦截，故不 fetch，直接走 <a>。
+  if (fileBaseUrl) {
+    try {
+      fmStatus('下载中…');
+      const a = document.createElement('a');
+      a.href = fileBaseUrl + '/' + key;
+      a.download = name;
+      document.body.appendChild(a); a.click(); a.remove();
+      fmStatus('下载已开始');
+      return;
+    } catch (e) { /* 直链异常则回退代理 */ }
+  }
+  try {
+    fmStatus('下载中…');
+    const res = await api('/api/v1/files/download?key=' + encodeURIComponent(key));
+    if (!res.ok) throw new Error(await res.text());
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+    fmStatus('下载完成');
+  } catch (e) { alert('下载失败：' + e.message); }
+}
 
     // 预览
     let previewObjUrl = null;
@@ -1039,6 +1052,7 @@ const FRONTEND_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
 
 
 
