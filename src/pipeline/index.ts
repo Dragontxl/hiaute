@@ -393,6 +393,8 @@ export class Pipeline {
     // 保证同时最多占用 4 个不同账户（ABCD 而非 AACD）。
     if (llmJobs.length > 0) {
       const MAX_PARALLEL = clampInt(Number(process.env.MAX_PARALLEL_GENERATION ?? 4), 1, 5);
+      // 单片段硬失败重试次数（默认 2：最多 3 次尝试），仍失败则跳过该片段、不拖垮整个任务
+      const SHOT_RETRIES = clampInt(Number(process.env.MAX_SHOT_RETRIES ?? 2), 0, 5);
       // checkpoint 落盘串行化：并发写同一文件会乱序丢进度
       let commitTail: Promise<void> = Promise.resolve();
       const commit = () => {
@@ -410,19 +412,37 @@ export class Pipeline {
           if (/^https?:\/\//i.test(url)) imageUrl = url;
         }
 
-        const result = await ctx.providers.agnesVideo.generate({
-          prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
-          seconds,
-          resolution: ctx.outputResolution,
-          ...(imageUrl ? { imageUrl } : {}),
-        });
-
-        await downloadFile(result.videoUrl, dest);
-        art.clipPaths[i] = dest;
-        ctx.checkpoint.remoteTasks[`shot-${i}`] = result.taskId;
-        ctx.checkpoint.completedShots.push(i);
-        commit();
-        log.info('shot generated', { index: i, seconds, remoteTaskId: result.taskId });
+        // 简单重试：单片段失败最多重试 SHOT_RETRIES 次；仍失败则跳过该片段（不抛错）。
+        let lastErr: unknown;
+        let ok = false;
+        for (let attempt = 0; attempt <= SHOT_RETRIES; attempt += 1) {
+          try {
+            const result = await ctx.providers.agnesVideo.generate({
+              prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
+              seconds,
+              resolution: ctx.outputResolution,
+              ...(imageUrl ? { imageUrl } : {}),
+            });
+            await downloadFile(result.videoUrl, dest);
+            art.clipPaths[i] = dest;
+            ctx.checkpoint.remoteTasks[`shot-${i}`] = result.taskId;
+            ctx.checkpoint.completedShots.push(i);
+            commit();
+            log.info('shot generated', { index: i, seconds, remoteTaskId: result.taskId, attempt });
+            ok = true;
+            break;
+          } catch (err) {
+            lastErr = err;
+            log.warn('shot generate failed; retrying', { index: i, attempt, shots: String(err).slice(0, 200) });
+            if (attempt < SHOT_RETRIES) {
+              await new Promise((res) => setTimeout(res, 15_000 * (attempt + 1)));
+            }
+          }
+        }
+        if (!ok) {
+          // 跳过失败片段：不加入 clipPaths，合成时自然缺位；不抛错保证其余片段继续
+          log.warn('shot skipped after retries', { index: i, shots: String(lastErr).slice(0, 300) });
+        }
       });
       await commitTail;
     }
