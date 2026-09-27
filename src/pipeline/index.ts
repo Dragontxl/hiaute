@@ -295,13 +295,14 @@ export class Pipeline {
     art.scriptShots = parseScriptShots(svml);
     log.info('script written', { scriptPath, bytes: Buffer.byteLength(svml), scriptShots: art.scriptShots.length });
 
-    // code 模式：按脚本分镜数切分镜头（每镜 >=2s），让画面随脚本多镜切换。
-    // HyperFrames 每帧软渲染约 1s，故 code 模式镜头短、总时长短。
-    if (ctx.renderMode === 'code') {
-      const n = Math.max(2, Math.min(art.scriptShots.length || 6, ctx.maxShots, Math.max(2, Math.floor(targetSeconds / 2))));
-      const per = Math.max(2, Math.round(targetSeconds / n));
-      durations = Array.from({ length: n }, () => per);
-      log.info('code shot plan (by script)', { shots: n, perShot: per, totalSeconds: n * per, scriptShots: art.scriptShots.length });
+    // 自由创作（无参考视频）：按脚本分镜数切分镜头，保证每个分镜都有对应的脚本内容，
+    // 避免镜头数与 @moment 数不一致导致部分镜头落回通用占位 prompt。
+    if (!analysis && art.scriptShots.length > 0) {
+      const n = Math.min(art.scriptShots.length, ctx.maxShots);
+      const promo = Math.max(1, Math.round(targetSeconds / n));
+      const perShot = ctx.renderMode === 'code' ? Math.max(1, Math.min(promo, 6)) : Math.min(cap, promo);
+      durations = Array.from({ length: n }, () => perShot);
+      log.info('freeform shot plan (by script)', { shots: n, perShot, totalSeconds: n * perShot, mode: ctx.renderMode, scriptShots: art.scriptShots.length });
     }
 
     // 注意：script.svml 是 Hypitapp 自己的简化脚本方言（@moment/@cue/@visual），
@@ -395,7 +396,7 @@ export class Pipeline {
       }
 
       const result = await ctx.providers.agnesVideo.generate({
-        prompt: shotPrompt(analysis, i),
+        prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
         seconds,
         resolution: ctx.outputResolution,
         ...(imageUrl ? { imageUrl } : {}),
@@ -648,13 +649,31 @@ async function downloadFile(url: string, dest: string, timeoutMs = 10 * 60_000):
   }
 }
 
-/** 组装单镜 prompt：画面 + 屏上文字 + 特效，保证复刻要素不丢。 */
-function shotPrompt(analysis: VideoAnalysis | undefined, i: number): string {
-  const s = analysis?.shots[i];
-  if (!s) return `按脚本生成第 ${i + 1} 个镜头的画面。`;
-  const parts = [`镜头 ${s.index}（${s.startSec}s–${s.endSec}s）：${s.description}`];
-  if (s.onScreenText) parts.push(`屏上文字：${s.onScreenText}`);
-  if (s.effects && s.effects.length > 0) parts.push(`特效：${s.effects.join('、')}`);
+/**
+ * 组装单镜生成 prompt。优先用 LLM 展开的脚本分镜（scriptShots，自由创作场景），
+ * 其次参考视频分析（复刻场景），并带上主题 brief，确保生成内容与需求相关。
+ */
+function shotPromptFor(
+  brief: string | undefined,
+  scriptShot: { description: string; onScreenText?: string } | undefined,
+  analysis: VideoAnalysis | undefined,
+  i: number,
+): string {
+  const parts: string[] = [];
+  if (brief) parts.push(`视频主题：${brief}`);
+  if (scriptShot) {
+    parts.push(`第 ${i + 1} 个镜头：${scriptShot.description}`);
+    if (scriptShot.onScreenText) parts.push(`旁白/屏上字幕：${scriptShot.onScreenText}`);
+  } else {
+    const s = analysis?.shots[i];
+    if (s) {
+      parts.push(`镜头 ${s.index}（${s.startSec}s–${s.endSec}s）：${s.description}`);
+      if (s.onScreenText) parts.push(`屏上文字：${s.onScreenText}`);
+      if (s.effects && s.effects.length > 0) parts.push(`特效：${s.effects.join('、')}`);
+    } else {
+      parts.push(`第 ${i + 1} 个镜头。`);
+    }
+  }
   return parts.join('\n');
 }
 
