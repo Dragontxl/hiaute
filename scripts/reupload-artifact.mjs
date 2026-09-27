@@ -30,7 +30,9 @@ if (!artifactId || !r2Prefix || !TOKEN || !GH_TOKEN) {
 
 const work = mkdirSync(join(tmpdir(), `reup-${artifactId}`), { recursive: true });
 const zipPath = join(work, 'artifact.zip');
-const CHUNK = 50 * 1024 * 1024;
+// 单片 10MB：避免 Cloudflare Worker 解析大 multipart body 超时（1102）。
+// R2 multipart 要求中间片 ≥5MB，10MB 满足；120MB → 12 片。
+const CHUNK = 10 * 1024 * 1024;
 
 /** 跟随重定向下载到文件：第一跳带 GH token（GitHub API），之后去掉 Authorization（Azure 签名 URL 自带凭据）。 */
 async function downloadZip() {
