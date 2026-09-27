@@ -324,6 +324,8 @@ export class Pipeline {
       log.warn('hypit render unavailable; fall back to ffmpeg per-shot code render');
     }
 
+    // 第一遍：幂等跳过 + code 模式逐镜渲染（串行、廉价）；llm 镜头只收集不执行
+    const llmJobs: Array<{ index: number; seconds: number; dest: string; framePath?: string }> = [];
     for (let i = 0; i < durations.length; i += 1) {
       const dest = join(dirs.outputs, `shot-${pad(i)}.mp4`);
       if (ctx.checkpoint.completedShots.includes(i) && art.clipPaths[i]) {
@@ -383,31 +385,46 @@ export class Pipeline {
       }
       // 抽帧按 analysis.shots 的 index 落盘，这里把生成序号映射回原始分镜序号
       const framePath = art.framePaths[analysis?.shots[i]?.index ?? -1];
+      llmJobs.push({ index: i, seconds, dest, ...(framePath ? { framePath } : {}) });
+    }
 
-      // 抽帧作为图生视频的首帧（仅当对象存储给出可公网访问的 URL 时可用）
-      let imageUrl: string | undefined;
-      if (framePath) {
-        const url = await ctx.store.put(
-          `tasks/${ctx.taskId}/frames/shot-${pad(i)}.jpg`,
-          await readFile(framePath),
-          'image/jpeg',
-        );
-        if (/^https?:\/\//i.test(url)) imageUrl = url;
-      }
+    // 第二遍：llm 镜头受控并发生成。
+    // 并行上限 = MAX_PARALLEL_GENERATION（默认 4）；账户池每账户 max_concurrent=1，
+    // 保证同时最多占用 4 个不同账户（ABCD 而非 AACD）。
+    if (llmJobs.length > 0) {
+      const MAX_PARALLEL = clampInt(Number(process.env.MAX_PARALLEL_GENERATION ?? 4), 1, 5);
+      // checkpoint 落盘串行化：并发写同一文件会乱序丢进度
+      let commitTail: Promise<void> = Promise.resolve();
+      const commit = () => {
+        commitTail = commitTail.then(() => ctx.onCheckpoint?.(ctx.checkpoint));
+      };
+      await runWithConcurrency(llmJobs, MAX_PARALLEL, async ({ index: i, seconds, dest, framePath }) => {
+        // 抽帧作为图生视频的首帧（仅当对象存储给出可公网访问的 URL 时可用）
+        let imageUrl: string | undefined;
+        if (framePath) {
+          const url = await ctx.store.put(
+            `tasks/${ctx.taskId}/frames/shot-${pad(i)}.jpg`,
+            await readFile(framePath),
+            'image/jpeg',
+          );
+          if (/^https?:\/\//i.test(url)) imageUrl = url;
+        }
 
-      const result = await ctx.providers.agnesVideo.generate({
-        prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
-        seconds,
-        resolution: ctx.outputResolution,
-        ...(imageUrl ? { imageUrl } : {}),
+        const result = await ctx.providers.agnesVideo.generate({
+          prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
+          seconds,
+          resolution: ctx.outputResolution,
+          ...(imageUrl ? { imageUrl } : {}),
+        });
+
+        await downloadFile(result.videoUrl, dest);
+        art.clipPaths[i] = dest;
+        ctx.checkpoint.remoteTasks[`shot-${i}`] = result.taskId;
+        ctx.checkpoint.completedShots.push(i);
+        commit();
+        log.info('shot generated', { index: i, seconds, remoteTaskId: result.taskId });
       });
-
-      await downloadFile(result.videoUrl, dest);
-      art.clipPaths[i] = dest;
-      ctx.checkpoint.remoteTasks[`shot-${i}`] = result.taskId;
-      ctx.checkpoint.completedShots.push(i);
-      ctx.onCheckpoint?.(ctx.checkpoint);
-      log.info('shot generated', { index: i, seconds, remoteTaskId: result.taskId });
+      await commitTail;
     }
   }
 
@@ -546,6 +563,29 @@ function analysisOf(art: Artifacts, i: number): { description: string; onScreenT
 /** 数组去重（保序）。 */
 function dedupe<T>(arr: T[]): T[] {
   return [...new Set(arr)];
+}
+
+/** 整数钳制到 [lo, hi]。 */
+function clampInt(v: number, lo: number, hi: number): number {
+  if (!Number.isFinite(v)) return lo;
+  return Math.min(hi, Math.max(lo, Math.trunc(v)));
+}
+
+/**
+ * 受控并发执行：最多 `limit` 个 worker 同时处理 items。
+ * 每个 worker 独立从队列取任务；配合账户池每账户 max_concurrent=1，
+ * 保证同时最多占用 limit 个不同账户（ABCD 而非 AACD）。
+ */
+async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
+  const queue = [...items];
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const item = queue.shift();
+      if (item === undefined) return;
+      await worker(item);
+    }
+  });
+  await Promise.all(workers);
 }
 
 function secs(v: number): string {

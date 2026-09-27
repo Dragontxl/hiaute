@@ -42,6 +42,8 @@ jobs:
       NORMALIZE_SIZE: "512"
       MAX_SHOTS: ${{ github.event.inputs.maxShots || '10' }}
       OUTPUT_RESOLUTION: "720p"
+      # llm 模式受控并发生成上限（默认 4）：同时最多用 4 个账户，单账户 max_concurrent=1 不并发
+      MAX_PARALLEL_GENERATION: "4"
       # 密钥：全部来自 Secrets，放在 job 级以便所有 step（含 run-pipeline）可见
       HYPITAPP_MASTER_KEY: ${{ secrets.HYPITAPP_MASTER_KEY }}
       HYPITAPP_CALLBACK_SECRET: ${{ secrets.HYPITAPP_CALLBACK_SECRET }}
