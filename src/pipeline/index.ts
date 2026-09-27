@@ -25,6 +25,7 @@ import { Planner, planShotDurations } from '../planner/index.js';
 import { downloadReference } from './download.js';
 import type { HypitKernel } from '../kernel/index.js';
 import type { ObjectStore } from '../storage/types.js';
+import { renderHypitTask, type RenderShot } from '../render/hypitRender.js';
 
 const run = promisify(execFile);
 
@@ -297,7 +298,8 @@ export class Pipeline {
         log.info('svml check ok', { scriptPath });
       } catch (err) {
         log.error('svml check failed', { scriptPath, err: String(err) });
-        throw new Error(`SVML compile check failed for ${scriptPath}: ${String(err)}`);
+        // code 模式下 SVML 校验失败会走 ffmpeg 兜底；llm 模式则抛出
+        if (ctx.renderMode !== 'code') throw new Error(`SVML compile check failed for ${scriptPath}: ${String(err)}`);
       }
     } else {
       log.warn('hypit CLI not available; skip SVML compile check', { scriptPath });
@@ -305,6 +307,18 @@ export class Pipeline {
 
     const total = durations.reduce((s, v) => s + v, 0);
     log.info('shot plan ready', { shots: durations.length, totalSeconds: total, cap });
+
+    // code 模式主路径：一次 hypit build 渲染完整视频（官方模板，非逐镜）。
+    // 成功则产出 outputs/final.mp4 并结束 GENERATE_SHOTS；失败/不可用降级到 ffmpeg 逐镜。
+    if (ctx.renderMode === 'code') {
+      const rendered = await this.renderCodeWithHypit(ctx, dirs, art, durations);
+      if (rendered) {
+        ctx.checkpoint.completedStages = dedupe([...ctx.checkpoint.completedStages, 'GENERATE_SHOTS', 'COMPOSE']);
+        ctx.onCheckpoint?.(ctx.checkpoint);
+        return;
+      }
+      log.warn('hypit render unavailable; fall back to ffmpeg per-shot code render');
+    }
 
     for (let i = 0; i < durations.length; i += 1) {
       const dest = join(dirs.outputs, `shot-${pad(i)}.mp4`);
@@ -393,9 +407,66 @@ export class Pipeline {
     }
   }
 
+  /**
+   * code 模式主路径：用 hypit 官方模板一次渲染完整视频。
+   * 返回 true 表示成功（outputs/final.mp4 已就位）；false 表示降级到 ffmpeg。
+   */
+  private async renderCodeWithHypit(
+    ctx: PipelineContext,
+    dirs: PipelineDirs,
+    art: Artifacts,
+    durations: number[],
+  ): Promise<boolean> {
+    if (!(await ctx.kernel.available())) return false;
+    try {
+      // 组装渲染内容：每镜 标题（scriptShots/analysis/brief）+ 副标题（旁白）
+      const shots: RenderShot[] = durations.map((_, i) => {
+        const scriptShot = art.scriptShots?.[i];
+        const analysisShot = analysisOf(art, i);
+        const title = scriptShot?.description || analysisShot?.description || ctx.brief || `第 ${i + 1} 个镜头`;
+        const subtitle = scriptShot?.onScreenText || analysisShot?.onScreenText;
+        return { title, ...(subtitle ? { subtitle } : {}) };
+      });
+      const finalPath = join(dirs.outputs, 'final.mp4');
+      const result = await renderHypitTask({
+        workDir: dirs.work,
+        shots,
+        secondsPerShot: durations,
+        videoKey: `tasks/${ctx.taskId}/final.mp4`,
+        kernel: ctx.kernel,
+        store: ctx.store,
+      });
+      // 供 COMPOSE 直接复用
+      art.finalPath = result.finalPath;
+      art.clipPaths = [];
+      // 标记所有分镜完成，避免外层循环再走逐镜生成
+      for (let i = 0; i < durations.length; i += 1) {
+        if (!ctx.checkpoint.completedShots.includes(i)) ctx.checkpoint.completedShots.push(i);
+      }
+      ctx.onCheckpoint?.(ctx.checkpoint);
+      log.info('hypit render completed', { taskId: ctx.taskId, buildId: result.buildId, finalPath });
+      return true;
+    } catch (err) {
+      log.warn('hypit render failed; will fall back to ffmpeg', { taskId: ctx.taskId, err: String(err).slice(0, 500) });
+      return false;
+    }
+  }
+
   /* ---------------- 阶段 6：COMPOSE 合成 ---------------- */
 
   private async compose(ctx: PipelineContext, dirs: PipelineDirs, art: Artifacts): Promise<string | undefined> {
+    // hypit 渲染路径：GENERATE_SHOTS 已产出完整 final.mp4，直接上传
+    if (art.finalPath && (await fileExists(art.finalPath))) {
+      log.info('compose reuse hypit final', { finalPath: art.finalPath });
+      const key = `tasks/${ctx.taskId}/final.mp4`;
+      try {
+        const url = await ctx.store.put(key, await readFile(art.finalPath), 'video/mp4');
+        log.info('final uploaded', { key, url, resolution: ctx.outputResolution });
+      } catch (err) {
+        log.error('upload final failed; video kept on disk', { finalPath: art.finalPath, err: String(err) });
+      }
+      return key;
+    }
     let clips = art.clipPaths.filter((p): p is string => Boolean(p));
     // 幂等恢复：GENERATE_SHOTS 已标记完成时本轮不会重跑，需从磁盘扫回分镜片段
     if (clips.length === 0) {
@@ -461,6 +532,16 @@ export class Pipeline {
 
 function pad(n: number): string {
   return String(n).padStart(3, '0');
+}
+
+/** 取参考视频分析里第 i 个镜头（undefined 安全）。 */
+function analysisOf(art: Artifacts, i: number): { description: string; onScreenText?: string } | undefined {
+  return art.analysis?.shots[i];
+}
+
+/** 数组去重（保序）。 */
+function dedupe<T>(arr: T[]): T[] {
+  return [...new Set(arr)];
 }
 
 function secs(v: number): string {

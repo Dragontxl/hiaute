@@ -119,6 +119,17 @@ jobs:
             | head -c 400
           echo
 
+      # --- hypit 内核渲染准备（仅 code 模式需要：官方模板渲染）---
+      # @hypit/hypit 由 npm ci 安装；这里装字体包并 runtime up 准备 HyperFrames 渲染。
+      # llm 模式跳过（不耗本地渲染）。失败不阻断（流水线会降级到 ffmpeg 兜底）。
+      - name: Prepare hypit runtime (code mode)
+        if: ${{ env.RENDER_MODE == 'code' }}
+        run: |
+          set +e
+          npx hypit packages install @fontsource-variable/inter@5.3.0
+          npx hypit runtime up
+          echo "hypit ready: $(npx hypit --version)"
+
       - name: Run pipeline
         run: bash docker/scripts/run-pipeline.sh
 

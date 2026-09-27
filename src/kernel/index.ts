@@ -19,6 +19,26 @@ export interface KernelOptions {
   timeoutMs?: number;
 }
 
+/** 从 `hypit build --json --follow` 输出里解析 build id（bld_...）。 */
+function extractBuildId(out: string): string {
+  const lines = out.split('\n');
+  for (const line of lines) {
+    const m = line.match(/bld_[0-9A-Za-z_]+/);
+    if (m) return m[0];
+  }
+  // 兜底：--json 里可能带 "build" 字段
+  try {
+    const jsonLine = lines.map((l) => l.trim()).find((l) => l.startsWith('{') && l.endsWith('}'));
+    if (jsonLine) {
+      const parsed = JSON.parse(jsonLine) as { build?: { id?: string } };
+      if (parsed.build?.id) return parsed.build.id;
+    }
+  } catch {
+    /* ignore */
+  }
+  throw new Error(`could not extract build id from hypit build output:\n${out.slice(0, 500)}`);
+}
+
 export class HypitKernel {
   constructor(private opts: KernelOptions) {}
 
@@ -38,21 +58,38 @@ export class HypitKernel {
     return { ok: true, output: out };
   }
 
+  /** runtime use：选择运行期 Profile（对应 hypit.runtime.json）。 */
+  async runtimeUse(profilePath: string): Promise<string> {
+    return this.exec(['runtime', 'use', profilePath]);
+  }
+
+  /** runtime up：准备本地依赖与渲染 Worker（下载 Chromium 等）。 */
+  async runtimeUp(runtime?: string): Promise<string> {
+    const args = ['runtime', 'up'];
+    if (runtime) args.push('--runtime', runtime);
+    return this.exec(args, 30 * 60_000); // 首次下载浏览器可能较久
+  }
+
   /** plan：生成确定性图（build plan）。 */
-  async plan(scriptPath: string, planOut: string): Promise<string> {
-    return this.exec(['plan', scriptPath, '--out', planOut]);
+  async plan(runFile: string): Promise<string> {
+    return this.exec(['plan', runFile]);
   }
 
-  /** build：执行渲染/生成。 */
-  async build(runFile: string, opts?: { stage?: string }): Promise<string> {
-    const args = ['build', runFile];
-    if (opts?.stage) args.push('--stage', opts.stage);
-    return this.exec(args, 6 * 60 * 60_000); // 6h 上限，与 GHA 对齐
+  /**
+   * build：提交构建并等待结果。
+   * 返回 build id（从 --json 输出解析）。
+   */
+  async build(runFile: string, opts?: { title?: string; maxWaitMs?: number }): Promise<string> {
+    const args = ['build', runFile, '--json'];
+    if (opts?.title) args.push('--title', opts.title);
+    if (opts?.maxWaitMs !== undefined) args.push('--max-wait-ms', String(opts.maxWaitMs));
+    const out = await this.exec(args, 6 * 60 * 60_000); // 6h 上限，与 GHA 对齐
+    return extractBuildId(out);
   }
 
-  /** get：取回产物。 */
-  async get(kind: string, outDir: string): Promise<string> {
-    return this.exec(['get', kind, '--out', outDir]);
+  /** get：取回产物（final.video -> 本地 mp4）。 */
+  async get(buildId: string, outputName: string, toPath: string): Promise<string> {
+    return this.exec(['get', buildId, '--output', outputName, '--to', toPath]);
   }
 
   private async exec(args: string[], timeoutMs = this.opts.timeoutMs ?? 10 * 60_000): Promise<string> {

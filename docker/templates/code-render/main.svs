@@ -1,0 +1,12 @@
+<?svml using="@hypit/svs@1"?>
+<sheet version="1">
+  typo.title {
+    stack-order: 50; size: 96; weight: 600; fill: #ffffff; align: center; line-height: 1.2;
+    padding: 16 24; inline-size: hug; block-size: hug;
+  }
+  typo.subtitle {
+    stack-order: 40; size: 48; weight: 400; fill: #ffe08a; align: center; line-height: 1.3;
+    padding: 12 20; inline-size: hug; block-size: hug;
+  }
+  film.main { background: #1a1a2e; }
+</sheet>
