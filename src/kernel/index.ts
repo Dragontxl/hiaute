@@ -21,22 +21,21 @@ export interface KernelOptions {
 
 /** 从 `hypit build --json --follow` 输出里解析 build id（bld_...）。 */
 function extractBuildId(out: string): string {
-  const lines = out.split('\n');
-  for (const line of lines) {
-    const m = line.match(/bld_[0-9A-Za-z_]+/);
-    if (m) return m[0];
-  }
-  // 兜底：--json 里可能带 "build" 字段
+  // 优先解析 --json 机器视图：{ format: "hypit.cli-build@1", build: { id, ... } }
   try {
-    const jsonLine = lines.map((l) => l.trim()).find((l) => l.startsWith('{') && l.endsWith('}'));
-    if (jsonLine) {
-      const parsed = JSON.parse(jsonLine) as { build?: { id?: string } };
-      if (parsed.build?.id) return parsed.build.id;
+    for (const line of out.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('{')) {
+        const parsed = JSON.parse(trimmed) as { build?: { id?: string } };
+        if (parsed.build?.id) return parsed.build.id;
+      }
     }
   } catch {
-    /* ignore */
+    /* 非 JSON 输出，走正则 */
   }
-  throw new Error(`could not extract build id from hypit build output:\n${out.slice(0, 500)}`);
+  const m = out.match(/bld_[0-9A-Za-z_]+/);
+  if (m) return m[0];
+  throw new Error(`could not extract build id from hypit build output:\n${out.slice(0, 800)}`);
 }
 
 export class HypitKernel {
@@ -80,7 +79,7 @@ export class HypitKernel {
    * 返回 build id（从 --json 输出解析）。
    */
   async build(runFile: string, opts?: { title?: string; maxWaitMs?: number }): Promise<string> {
-    const args = ['build', runFile, '--json'];
+    const args = ['build', runFile, '--json', '--follow'];
     if (opts?.title) args.push('--title', opts.title);
     if (opts?.maxWaitMs !== undefined) args.push('--max-wait-ms', String(opts.maxWaitMs));
     const out = await this.exec(args, 6 * 60 * 60_000); // 6h 上限，与 GHA 对齐
