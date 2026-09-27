@@ -110,11 +110,15 @@ export function renderMidautumnScene(
   p.t-subtitle{position:absolute;left:50%;bottom:15%;transform:translateX(-50%);margin:0;font-size:30px;color:#d9c48f;text-shadow:0 2px 12px rgba(0,0,0,.5);animation:titleIn 1.6s .4s cubic-bezier(.2,.8,.2,1) both}
   @keyframes titleIn{from{opacity:0;transform:translate(-50%,26px)}to{opacity:1;transform:translate(-50%,0)}}`,
     data: { entrance: options.entranceFrames },
-    setup: `const root=document.querySelector('.sky');
+    setup: `(()=>{
+      const scene=document.querySelector('.sky');
+      const title=scene.querySelector('.t-title');
       return frame=>{
         const t=Math.min(1,frame/data.entrance), p=1-Math.pow(1-t,3);
-        root.style.opacity=String(p);
-      };`,
+        scene.style.opacity=String(p);
+        if(title) title.style.opacity=String(p);
+      };
+    })()`,
   });
 
   return sealVisualTrack({
