@@ -99,6 +99,16 @@ export function buildFileRoutes(storage: StorageBundle): Hono {
   const app = new Hono();
   const store = storage.objects;
 
+  /** 返回 R2 公开访问基址（供前端拼直链）。未配置 R2_PUBLIC_URL 时返回 null（fallback 走控制面代理）。 */
+  app.get('/base-url', (c) => {
+    const probe = store.getUrl('__probe__');
+    let baseUrl: string | null = null;
+    if (/^https?:\/\//i.test(probe)) {
+      baseUrl = probe.slice(0, probe.indexOf('/__probe__'));
+    }
+    return c.json({ baseUrl });
+  });
+
   /** 列举目录（虚拟目录聚合）。 */
   app.get('/', async (c) => {
     const raw = c.req.query();

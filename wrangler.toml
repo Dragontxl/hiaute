@@ -50,5 +50,5 @@ OUTPUT_RESOLUTION = "720p"
 # workers.dev 子域名在本账户未显式绑定，GHA 回调用它会 404。
 # 部署后通过 CF Dashboard → Variables 设置 HYPITAPP_MASTER_KEY 和 HYPITAPP_CALLBACK_SECRET
 HYPITAPP_CALLBACK_URL = "https://hypitapp.ygtxl.dpdns.org/api/v1/callback/github"
-# R2 公开前缀（绑定 R2 后再填）
-# R2_PUBLIC_URL = "https://objects.example.com"
+# R2 公开访问前缀（存储桶已绑定自定义域名 hiauto-object.ygtxl.dpdns.org）
+R2_PUBLIC_URL = "https://hiauto-object.ygtxl.dpdns.org"

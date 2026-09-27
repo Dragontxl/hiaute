@@ -208,6 +208,29 @@ const FRONTEND_HTML = `<!doctype html>
     if (tokenFromUrl) localStorage.setItem('hypitappToken', tokenFromUrl);
     const TOKEN = tokenFromUrl || localStorage.getItem('hypitappToken') || '';
 
+    // R2 公开访问基址（自定义域名 hiauto-object.ygtxl.dpdns.org）；用于复制直链 / 直链预览
+    let fileBaseUrl = null;
+    async function initFileBaseUrl() {
+      try {
+        const res = await fetch((API || '') + '/api/v1/files/base-url', { headers: apiHeaders({}) });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.baseUrl) fileBaseUrl = data.baseUrl;
+        }
+      } catch (e) { /* 忽略：拿不到就退回控制面代理链接 */ }
+    }
+    /** 文件直链（R2 自定义域名）；不可用时退回控制面下载/预览端点。 */
+    function fileDirectUrl(key) {
+      const enc = encodeURIComponent(key);
+      if (fileBaseUrl) return fileBaseUrl + '/' + key;
+      return (API || '') + '/api/v1/files/download?key=' + enc;
+    }
+    function fileDirectPreviewUrl(key) {
+      const enc = encodeURIComponent(key);
+      if (fileBaseUrl) return fileBaseUrl + '/' + key;
+      return (API || '') + '/api/v1/files/preview?key=' + enc + (TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '');
+    }
+
     function apiHeaders(extra) {
       const h = { ...(extra || {}) };
       if (TOKEN) h['authorization'] = 'Bearer ' + TOKEN;
@@ -447,6 +470,7 @@ const FRONTEND_HTML = `<!doctype html>
 
     refresh();
     setInterval(refresh, 5000);
+    initFileBaseUrl(); // 拉取 R2 公开域名，供复制直链 / 直链预览 
 
     /* ================= 文件管理 ================= */
     let fmPrefix = '';
@@ -565,7 +589,7 @@ const FRONTEND_HTML = `<!doctype html>
       }
       if (cp) {
         const key = cp.getAttribute('data-copy');
-        const url = (API || '') + '/api/v1/files/download?key=' + encodeURIComponent(key);
+        const url = fileDirectUrl(key);
         try {
           await navigator.clipboard.writeText(url);
           fmStatus('链接已复制');
@@ -788,15 +812,14 @@ const FRONTEND_HTML = `<!doctype html>
 
         const info = '<p class="preview-info">大小: ' + fmtSize(size) + ' · 类型: ' + (ct || '未知') + '</p>';
 
-        // 视频/音频使用流式预览（支持拖动）。<video>/<audio> 无法带 Authorization 头，故用 ?token= 鉴权。
-        const streamAuth = TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '';
+        // 视频/音频使用流式预览（支持拖动）。优先 R2 直链；否则走控制面 ?token= 鉴权。
         if (ct.startsWith('video/')) {
-          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key) + streamAuth;
+          const previewUrl = fileDirectPreviewUrl(key);
           body.innerHTML = info + '<video src="' + previewUrl + '" controls preload="metadata" style="max-width:100%;border-radius:8px;background:#000" />';
           return;
         }
         if (ct.startsWith('audio/')) {
-          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key) + streamAuth;
+          const previewUrl = fileDirectPreviewUrl(key);
           body.innerHTML = info + '<audio src="' + previewUrl + '" controls preload="metadata" style="width:100%" />';
           return;
         }
@@ -1016,6 +1039,7 @@ const FRONTEND_HTML = `<!doctype html>
 </body>
 </html>
 `;
+
 
 
 
