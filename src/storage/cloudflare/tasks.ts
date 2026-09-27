@@ -120,6 +120,11 @@ export class D1TaskRepository implements TaskRepository {
     return (res.results ?? []).map(rowToTask);
   }
 
+  async delete(id: string): Promise<boolean> {
+    const res = await this.db.prepare('DELETE FROM tasks WHERE id = ?').bind(id).run();
+    return Number((res.meta as { changes?: number }).changes ?? 0) > 0;
+  }
+
   async update(
     id: string,
     patch: Partial<Pick<TaskRecord, 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile'>>,

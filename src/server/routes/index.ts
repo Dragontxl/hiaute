@@ -143,8 +143,11 @@ function bearerAuth(cfg: AppConfig): MiddlewareHandler {
     const sp = header.indexOf(' ');
     const scheme = sp >= 0 ? header.slice(0, sp) : '';
     const token = sp >= 0 ? header.slice(sp + 1).trim() : '';
-    if (scheme.toLowerCase() !== 'bearer' || !safeEqual(token, cfg.apiToken!)) {
-      return c.json({ error: 'unauthorized', detail: 'expected header: Authorization: Bearer <HYPITAPP_API_TOKEN>' }, 401);
+    // 媒体流式播放（<video>/<audio> src）无法携带 Authorization 头，故额外放行 ?token= 查询参数。
+    const queryToken = c.req.query('token') ?? '';
+    const ok = (scheme.toLowerCase() === 'bearer' && safeEqual(token, cfg.apiToken!)) || (queryToken !== '' && safeEqual(queryToken, cfg.apiToken!));
+    if (!ok) {
+      return c.json({ error: 'unauthorized', detail: 'expected header: Authorization: Bearer <HYPITAPP_API_TOKEN> (or ?token= for media streaming)' }, 401);
     }
     await next();
   };
@@ -283,6 +286,29 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       return c.json({ error: 'dispatch failed', detail: (await storage.tasks.get(id))?.error ?? '' }, 502);
     }
     return c.json(await storage.tasks.get(id));
+  });
+
+  /**
+   * 删除任务：移除 D1 记录，并级联删除 R2 中该任务的产物目录 tasks/<目录名>/。
+   * 目录名与前端/派生规则一致：<名称>_<UTC时间戳>；同时清理历史遗留的 tasks/<taskId>/。
+   */
+  api.delete('/tasks/:id', async (c) => {
+    const id = c.req.param('id');
+    const t = await storage.tasks.get(id);
+    if (!t) return c.json({ error: 'not found' }, 404);
+    const dir = artifactDirName(t.name, t.id, t.createdAt);
+    const deleted = await storage.tasks.delete(id);
+    let objectsDeleted = 0;
+    for (const prefix of [`tasks/${dir}/`, `tasks/${id}/`]) {
+      try {
+        await storage.objects.delete(prefix);
+        objectsDeleted += 1;
+      } catch (err) {
+        log.warn('delete artifacts failed', { id, prefix, err: String(err) });
+      }
+    }
+    log.info('task deleted', { id, dir, deleted, objectsPrefixes: objectsDeleted });
+    return c.json({ deleted, id, artifactDir: dir });
   });
 
   /**

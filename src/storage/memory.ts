@@ -69,6 +69,10 @@ export class MemoryTaskRepository implements TaskRepository {
     return [...this.tasks.values()].sort((a, b) => b.createdAt - a.createdAt);
   }
 
+  async delete(id: string): Promise<boolean> {
+    return this.tasks.delete(id);
+  }
+
   async update(
     id: string,
     patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,

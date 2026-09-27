@@ -171,6 +171,17 @@
     </div>
   </div>
 
+  <!-- 任务详情弹窗 -->
+  <div class="modal-overlay" id="detailModal">
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 id="detailTitle">任务详情</h3>
+        <button class="modal-close" id="detailClose">&times;</button>
+      </div>
+      <div class="modal-body" id="detailBody"></div>
+    </div>
+  </div>
+
   <script>
     const params = new URLSearchParams(location.search);
     const API = params.get('api') || '';
@@ -206,6 +217,48 @@
       return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
     }
 
+    /** 任务详情弹窗：展示任务创建时的全部参数与当前进度。 */
+    async function showTaskDetail(id) {
+      const modal = document.getElementById('detailModal');
+      const title = document.getElementById('detailTitle');
+      const body = document.getElementById('detailBody');
+      title.textContent = '任务详情';
+      body.innerHTML = '<p class="muted">加载中…</p>';
+      modal.classList.add('active');
+      try {
+        const res = await api('/api/v1/tasks/' + id);
+        if (!res.ok) throw new Error(await res.text());
+        const t = await res.json();
+        const renderModeLabel = t.renderMode === 'code' ? '代码生成（确定性渲染）' : (t.renderMode === 'llm' ? '大模型生成（画面由 AI 生成）' : '—');
+        const rows = [
+          ['任务 ID', t.id],
+          ['名称', t.name || '（默认按创建时间）'],
+          ['状态', (t.status || '') + (t.stage ? ' / ' + t.stage : '')],
+          ['生成方式', renderModeLabel],
+          ['提示词 / 描述', t.brief || '（未填写）'],
+          ['参考视频 URL', t.referenceUrl || '（无，自由创作）'],
+          ['时长上限', (t.maxDurationSeconds ?? '—') + ' 秒'],
+          ['归一化边长', String(t.normalizeSize ?? '—')],
+          ['输出档位', t.outputResolution || '—'],
+          ['创建时间', fmtTaskTime(t.createdAt)],
+          ['更新时间', fmtTaskTime(t.updatedAt)],
+          ['结束时间', t.completedAt ? fmtTaskTime(t.completedAt) : '—'],
+          ['错误', t.error || '—'],
+        ];
+        const table = rows.map(([k, v]) =>
+          '<tr><th style="width:110px;text-align:right;color:#888;font-weight:500;vertical-align:top">' + escapeHtml(String(k)) +
+          '</th><td style="word-break:break-all">' + escapeHtml(String(v)) + '</td></tr>').join('');
+        body.innerHTML = '<table style="width:100%">' + table + '</table>';
+      } catch (e) {
+        body.innerHTML = '<p style="color:#dc2626">加载失败：' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    document.getElementById('detailClose').addEventListener('click', () => document.getElementById('detailModal').classList.remove('active'));
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target === document.getElementById('detailModal')) document.getElementById('detailModal').classList.remove('active');
+    });
+
     async function refresh() {
       try {
         const res = await api('/api/v1/tasks');
@@ -229,7 +282,7 @@
               <td class="muted">${fmtTaskTime(t.createdAt)}</td>
               <td class="muted">${t.status==='COMPLETED' || t.status==='FAILED' ? fmtTaskTime(t.completedAt) : '—'}</td>
               <td class="muted">${t.error ? escapeHtml(t.error.slice(0,60)) : '—'}</td>
-              <td><button class="link" data-browse="${dir}">浏览产物</button> <button class="link" data-files="${dir}">查看文件</button> <button class="link" data-retry="${t.id}" ${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button></td>
+              <td><button class="link" data-detail="${t.id}">详情</button> <button class="link" data-browse="${dir}">浏览产物</button> <button class="link" data-files="${dir}">查看文件</button> <button class="link" data-retry="${t.id}" ${['PENDING','FAILED','PAUSED'].includes(t.status)?'':'disabled'}>重试</button> <button class="link" data-delTask="${t.id}" style="color:#dc2626">删除</button></td>
             </tr>
             <tr id="files-${t.id}" style="display:none"><td colspan="10" class="task-detail" id="files-${t.id}-content">加载中…</td></tr>`;
         }).join('');
@@ -239,6 +292,27 @@
     }
 
     document.getElementById('rows').addEventListener('click', async (ev) => {
+      const detail = ev.target.closest('button[data-detail]');
+      if (detail) {
+        await showTaskDetail(detail.getAttribute('data-detail'));
+        return;
+      }
+      const delTask = ev.target.closest('button[data-delTask]');
+      if (delTask) {
+        const id = delTask.getAttribute('data-delTask');
+        if (!confirm('确定删除该任务？其产物文件夹也会从 R2 一并删除，且不可恢复。')) return;
+        delTask.disabled = true;
+        try {
+          const res = await api('/api/v1/tasks/' + id, { method: 'DELETE' });
+          if (!res.ok) throw new Error(await res.text());
+          await refresh();
+          loadFiles();
+        } catch (e) {
+          alert('删除失败：' + e.message);
+          delTask.disabled = false;
+        }
+        return;
+      }
       const browse = ev.target.closest('button[data-browse]');
       if (browse) {
         const taskId = browse.getAttribute('data-browse');
@@ -660,20 +734,28 @@
         const listRes = await api('/api/v1/files?prefix=' + encodeURIComponent(fmPrefix) + '&limit=200');
         const listData = await listRes.json();
         const item = (listData.items || []).find(i => i.key === key);
-        const ct = item?.contentType || '';
+        let ct = item?.contentType || '';
         const size = item?.size || 0;
+        // contentType 缺失时按扩展名兜底推断（保证视频走流式播放）
+        if (!ct) {
+          const ext = (name.split('.').pop() || '').toLowerCase();
+          if (['mp4','webm','mov','mkv','avi'].includes(ext)) ct = 'video/' + ext;
+          else if (['mp3','wav','ogg','aac','m4a','flac'].includes(ext)) ct = 'audio/' + ext;
+          else if (['png','jpg','jpeg','gif','webp','bmp','svg'].includes(ext)) ct = 'image/' + ext;
+        }
 
         const info = '<p class="preview-info">大小: ' + fmtSize(size) + ' · 类型: ' + (ct || '未知') + '</p>';
 
-        // 视频/音频使用流式预览（支持拖动）
+        // 视频/音频使用流式预览（支持拖动）。<video>/<audio> 无法带 Authorization 头，故用 ?token= 鉴权。
+        const streamAuth = TOKEN ? '&token=' + encodeURIComponent(TOKEN) : '';
         if (ct.startsWith('video/')) {
-          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key);
-          body.innerHTML = info + '<video src="' + previewUrl + '" controls style="max-width:100%;border-radius:8px;background:#000" />';
+          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key) + streamAuth;
+          body.innerHTML = info + '<video src="' + previewUrl + '" controls preload="metadata" style="max-width:100%;border-radius:8px;background:#000" />';
           return;
         }
         if (ct.startsWith('audio/')) {
-          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key);
-          body.innerHTML = info + '<audio src="' + previewUrl + '" controls style="width:100%" />';
+          const previewUrl = (API || '') + '/api/v1/files/preview?key=' + encodeURIComponent(key) + streamAuth;
+          body.innerHTML = info + '<audio src="' + previewUrl + '" controls preload="metadata" style="width:100%" />';
           return;
         }
 

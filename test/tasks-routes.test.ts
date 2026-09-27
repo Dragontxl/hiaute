@@ -185,3 +185,78 @@ describe('产物上传回调 /api/v1/callback/artifact', () => {
     assert.equal(res.status, 400);
   });
 });
+
+describe('删除任务（级联删除产物目录）', () => {
+  function appWithStorage() {
+    const storage = createMemoryStorage();
+    const app = buildRoutes(BASE_CFG, storage);
+    return { app, storage };
+  }
+
+  it('删除任务返回 deleted 并移除记录', async () => {
+    const { app } = appWithStorage();
+    const created = (await (await req(app, '/api/v1/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '待删任务' }),
+    })).json()) as any;
+
+    const del = await req(app, `/api/v1/tasks/${created.id}`, { method: 'DELETE' });
+    assert.equal(del.status, 200);
+    const body = (await del.json()) as any;
+    assert.equal(body.deleted, true);
+    assert.equal(body.id, created.id);
+
+    const after = await req(app, `/api/v1/tasks/${created.id}`);
+    assert.equal(after.status, 404);
+  });
+
+  it('删除任务时级联删除 R2 产物目录', async () => {
+    const { app, storage } = appWithStorage();
+    const created = (await (await req(app, '/api/v1/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: '有产物的任务' }),
+    })).json()) as any;
+
+    // 直接写入模拟产物（目录名 = artifactDirName）
+    const { artifactDirName } = await import('../src/storage/taskName.js');
+    const dir = artifactDirName(created.name, created.id, created.createdAt);
+    await storage.objects.put(`tasks/${dir}/final.mp4`, new Uint8Array([1, 2, 3]), 'video/mp4');
+    await storage.objects.put(`tasks/${dir}/script.svml`, 'svml', 'text/plain');
+    const before = await storage.objects.list({ prefix: `tasks/${dir}/` });
+    assert.equal(before.objects.length, 2);
+
+    const del = await req(app, `/api/v1/tasks/${created.id}`, { method: 'DELETE' });
+    assert.equal(del.status, 200);
+
+    const after = await storage.objects.list({ prefix: `tasks/${dir}/` });
+    assert.equal(after.objects.length, 0, '产物目录应被清空');
+  });
+
+  it('删除不存在的任务返回 404', async () => {
+    const { app } = appWithStorage();
+    const res = await req(app, '/api/v1/tasks/does-not-exist', { method: 'DELETE' });
+    assert.equal(res.status, 404);
+  });
+});
+
+describe('媒体流式播放鉴权（?token= 查询参数）', () => {
+  function appWithToken() {
+    const storage = createMemoryStorage();
+    const app = buildRoutes({ ...BASE_CFG, apiToken: 'secret-token' }, storage);
+    return { app, storage };
+  }
+
+  it('缺少令牌返回 401', async () => {
+    const { app } = appWithToken();
+    const res = await req(app, '/api/v1/tasks');
+    assert.equal(res.status, 401);
+  });
+
+  it('查询参数 ?token= 可访问（供 <video> 流式播放）', async () => {
+    const { app } = appWithToken();
+    const res = await req(app, '/api/v1/tasks?token=secret-token');
+    assert.equal(res.status, 200);
+  });
+});

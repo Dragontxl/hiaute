@@ -87,6 +87,8 @@ export interface TaskRepository {
   create(input: TaskCreateInput): Promise<TaskRecord>;
   get(id: string): Promise<TaskRecord | undefined>;
   list(): Promise<TaskRecord[]>;
+  /** 删除任务记录（产物目录由上层另行清理）。 */
+  delete(id: string): Promise<boolean>;
   update(
     id: string,
     patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
