@@ -1,0 +1,25 @@
+{
+  "name": "@hypitapp/midautumn-scene",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "hypit": {
+    "activation": "./dist/activation.js"
+  },
+  "exports": {
+    ".": "./dist/render.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@hypit/hypit": "^0.2.16",
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.0"
+  }
+}

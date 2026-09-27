@@ -1,10 +1,10 @@
 /**
  * hypit 官方模板渲染器（code 模式主路径）。
  *
- * 思路：仓库维护官方 hypit 模板（docker/templates/code-render），
+ * 思路：仓库维护 hypit 官方 code-render 组件（midautumn-scene），
  * LLM planner 已把 brief 展开成逐镜头文字（scriptShots），本模块把它们
- * 填充进任务专属 .svml（每镜 标题+副标题+淡入动效），生成 .svrun，
- * 再调 `hypit plan/build/get` 走官方 HyperFrames 渲染（纯本地、零模型成本）。
+ * 填充进任务专属 .svml（每镜一个 midautumn:Scene：渐变夜空+圆月+星星+玉兔+标题淡入），
+ * 生成 .svrun，再调 `hypit plan/build/get` 走官方 HyperFrames 渲染（纯本地、零模型成本）。
  *
  * hypit 不可用时上层会降级到 ffmpeg 兜底渲染（pipeline 的 code 分支）。
  */
@@ -81,34 +81,23 @@ export async function renderHypitTask(opts: HypitRenderOptions): Promise<HypitRe
 
   await mkdir(workDir, { recursive: true });
 
-  // 组装 .svml：imports + clock + frames + copy values + styles + motion + track + film + render
-  const frameLines: string[] = [];
-  const copyLines: string[] = [];
-  const areaLines: string[] = [];
+  // 组装 .svml：每镜一个 midautumn:Scene（时间窗按 start/end 切分）
+  const sceneLines: string[] = [];
   opts.shots.forEach((shot, i) => {
     const start = i === 0 ? 0 : ends[i - 1]!;
     const end = ends[i]!;
-    const t = `${i + 1}`.padStart(2, '0');
-    const titleId = `title-${t}`;
-    const subId = `subtitle-${t}`;
-    const titleFrame = `title-frame-${t}`;
-    const subFrame = `subtitle-frame-${t}`;
-    frameLines.push(
-      `  <spatial:AnchoredFrame id="${titleFrame}" within={canvas}\n    x="50%" y="20%" width="90%" height="25%" anchor="center"/>`,
-    );
-    frameLines.push(
-      `  <spatial:AnchoredFrame id="${subFrame}" within={canvas}\n    x="50%" y="55%" width="90%" height="20%" anchor="center"/>`,
-    );
-    copyLines.push(`  <copy:Value id="${titleId}">${xmlEscape(shot.title)}</copy:Value>`);
-    if (shot.subtitle) copyLines.push(`  <copy:Value id="${subId}">${xmlEscape(shot.subtitle)}</copy:Value>`);
-    areaLines.push(
-      `    <typo:Area id="${titleId}-area" content={${titleId}}\n      placement={${titleFrame}} style={title-style} motion={fade-up} start="${start}s" end="${end}s"/>`,
-    );
-    if (shot.subtitle) {
-      areaLines.push(
-        `    <typo:Area id="${subId}-area" content={${subId}}\n      placement={${subFrame}} style={subtitle-style} motion={fade-up} start="${start}s" end="${end}s"/>`,
-      );
-    }
+    const sceneId = `night-${i + 1}`;
+    const attrs = [
+      `id="${sceneId}"`,
+      'timeline={animation.timeline}',
+      'canvas={canvas}',
+      'font={font}',
+      `start="${start}s" end="${end}s"`,
+      `title="${xmlEscape(shot.title)}"`,
+      ...(shot.subtitle ? [`subtitle="${xmlEscape(shot.subtitle)}"`] : []),
+      'rabbit="true"',
+    ];
+    sceneLines.push(`  <midautumn:Scene ${attrs.join(' ')}/>`);
   });
 
   const svml = `<?svml using="@hypit/markup@1"?>
@@ -116,8 +105,7 @@ export async function renderHypitTask(opts: HypitRenderOptions): Promise<HypitRe
   <import as="time" from="@hypit/timeline-author@1"/>
   <import as="spatial" from="@hypit/spatial@1"/>
   <import as="fonts" from="@hypit/fonts-open@1"/>
-  <import as="copy" from="@hypit/text@1"/>
-  <import as="typo" from="@hypit/typography-track@1"/>
+  <import as="midautumn" from="@hypitapp/midautumn-scene@1"/>
   <import as="film" from="@hypit/film@1"/>
   <import as="render" from="@hypit/render-hyperframes@1"/>
   <import as="style" source="./main.svs"/>
@@ -127,23 +115,10 @@ export async function renderHypitTask(opts: HypitRenderOptions): Promise<HypitRe
   <spatial:Canvas id="canvas" width="1080" height="1920"/>
   <fonts:Stack id="font" family="inter" weight="600" style="normal"/>
 
-${frameLines.join('\n')}
-
-${copyLines.join('\n')}
-
-  <typo:Style id="title-style" recipe={style.typo.title} font={font}/>
-  <typo:Style id="subtitle-style" recipe={style.typo.subtitle} font={font}/>
-  <typo:Motion id="fade-up">
-    <typo:ItemKeyframe at="0" opacity="0" y="40"/>
-    <typo:ItemKeyframe at="15" opacity="1" y="0"/>
-  </typo:Motion>
-
-  <typo:Track id="titles" timeline={animation.timeline}>
-${areaLines.join('\n')}
-  </typo:Track>
+${sceneLines.join('\n')}
 
   <film:Film id="main" canvas={canvas} timeline={animation.timeline} appearance={style.film.main}>
-    <film:Track source={titles.track}/>
+    ${sceneLines.map((_, i) => `<film:Track source={night-${i + 1}.track}/>`).join('\n    ')}
   </film:Film>
   <render:Video id="final" composition={main.composition} timeline={animation.timeline}/>
 </svml>
