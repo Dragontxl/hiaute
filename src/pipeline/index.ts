@@ -304,18 +304,9 @@ export class Pipeline {
       log.info('code shot plan (by script)', { shots: n, perShot: per, totalSeconds: n * per, scriptShots: art.scriptShots.length });
     }
 
-    if (await ctx.kernel.available()) {
-      try {
-        await ctx.kernel.check(scriptPath);
-        log.info('svml check ok', { scriptPath });
-      } catch (err) {
-        log.error('svml check failed', { scriptPath, err: String(err) });
-        // code 模式下 SVML 校验失败会走 ffmpeg 兜底；llm 模式则抛出
-        if (ctx.renderMode !== 'code') throw new Error(`SVML compile check failed for ${scriptPath}: ${String(err)}`);
-      }
-    } else {
-      log.warn('hypit CLI not available; skip SVML compile check', { scriptPath });
-    }
+    // 注意：script.svml 是 Hypitapp 自己的简化脚本方言（@moment/@cue/@visual），
+    // 不是 hypit 官方 XML 源，因此**不能**交给 hypit check。
+    // 官方格式的编译校验发生在 code 模式生成 author.svml 之后（见 renderHypitTask）。
 
     const total = durations.reduce((s, v) => s + v, 0);
     log.info('shot plan ready', { shots: durations.length, totalSeconds: total, cap });
