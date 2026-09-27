@@ -125,7 +125,7 @@ async function tryDispatch(
       ...(brief ? { brief } : {}),
       ...(renderMode ? { renderMode } : {}),
     });
-    await storage.tasks.markStatus(taskId, 'DISPATCHED');
+    await storage.tasks.markStatus(taskId, 'DISPATCHED', '', { force: true });
     return 'ok';
   } catch (err) {
     log.error('dispatch failed', { taskId, err: String(err) });

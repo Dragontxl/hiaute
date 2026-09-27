@@ -93,15 +93,23 @@ export class MemoryTaskRepository implements TaskRepository {
     return t;
   }
 
-  async markStatus(id: string, status: TaskStatus, error?: string): Promise<TaskRecord | undefined> {
+  async markStatus(id: string, status: TaskStatus, error?: string, opts?: { force?: boolean }): Promise<TaskRecord | undefined> {
     const t = this.tasks.get(id);
     if (!t) return undefined;
-    // 终态不可被后续回调覆盖（与 D1 版 `WHERE status NOT IN (...)` 语义一致），保证回调重放幂等
-    if (t.status === 'COMPLETED' || t.status === 'FAILED') return t;
+    // 终态不可被后续回调覆盖（与 D1 版 `WHERE status NOT IN (...)` 语义一致），保证回调重放幂等。
+    // force=true（重试派发）例外：允许离开终态。
+    const force = opts?.force === true;
+    if (!force && (t.status === 'COMPLETED' || t.status === 'FAILED')) return t;
     t.status = status;
-    if (error) t.error = error;
-    // 终态写入结束时间（与 D1 版 `completed_at IS NULL` 语义一致，保证幂等）
-    if (status === 'COMPLETED' || status === 'FAILED') t.completedAt = Date.now();
+    if (error !== undefined) {
+      if (error) t.error = error;
+      else delete t.error;
+    }
+    if (force) {
+      delete t.completedAt;
+    } else if (status === 'COMPLETED' || status === 'FAILED') {
+      t.completedAt = Date.now();
+    }
     t.updatedAt = Date.now();
     return t;
   }

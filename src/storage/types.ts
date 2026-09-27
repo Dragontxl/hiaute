@@ -94,7 +94,8 @@ export interface TaskRepository {
     patch: Partial<Pick<TaskRecord, 'name' | 'status' | 'stage' | 'error' | 'checkpoint' | 'runFile' | 'completedAt'>>,
   ): Promise<TaskRecord | undefined>;
   advanceStage(id: string, stage: Stage): Promise<TaskRecord | undefined>;
-  markStatus(id: string, status: TaskStatus, error?: string): Promise<TaskRecord | undefined>;
+  /** 更新状态；默认终态（COMPLETED/FAILED）不可被覆盖（回调幂等）。force=true 用于重试派发（可离开终态）。 */
+  markStatus(id: string, status: TaskStatus, error?: string, opts?: { force?: boolean }): Promise<TaskRecord | undefined>;
   mergeCheckpoint(id: string, cp: TaskCheckpoint): Promise<TaskRecord | undefined>;
 }
 

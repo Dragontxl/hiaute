@@ -145,19 +145,26 @@ export class D1TaskRepository implements TaskRepository {
     return next;
   }
 
-  async markStatus(id: string, status: TaskStatus, error?: string): Promise<TaskRecord | undefined> {
+  async markStatus(id: string, status: TaskStatus, error?: string, opts?: { force?: boolean }): Promise<TaskRecord | undefined> {
     const now = Date.now();
-    // 纯条件更新（不做读改写）：终态不可被后续回调覆盖，保证回调重放幂等
+    const force = opts?.force === true;
+    // 纯条件更新（不做读改写）：终态不可被后续回调覆盖，保证回调重放幂等。
+    // force=true（重试派发）例外：允许离开 COMPLETED/FAILED。
+    const guard = force ? '' : " AND status NOT IN ('COMPLETED', 'FAILED')";
     const stmts = [
       this.db
-        .prepare("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ? AND status NOT IN ('COMPLETED', 'FAILED')")
+        .prepare(`UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?${guard}`)
         .bind(status, now, id),
     ];
     if (error !== undefined) {
-      stmts.push(this.db.prepare('UPDATE tasks SET error = ? WHERE id = ?').bind(error, id));
+      // 传空串表示清除错误（重试派发成功后清空上次失败原因）
+      stmts.push(this.db.prepare('UPDATE tasks SET error = ? WHERE id = ?').bind(error || null, id));
     }
-    // 终态写入结束时间（已终态的重复回调不覆盖，保证幂等）
-    if (status === 'COMPLETED' || status === 'FAILED') {
+    if (force) {
+      // 离开终态时清空结束时间
+      stmts.push(this.db.prepare('UPDATE tasks SET completed_at = NULL WHERE id = ?').bind(id));
+    } else if (status === 'COMPLETED' || status === 'FAILED') {
+      // 终态写入结束时间（已终态的重复回调不覆盖，保证幂等）
       stmts.push(
         this.db
           .prepare("UPDATE tasks SET completed_at = ? WHERE id = ? AND completed_at IS NULL")

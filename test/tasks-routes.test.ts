@@ -137,6 +137,30 @@ describe('任务创建与重试（dispatch 语义）', () => {
     assert.equal(((await (await on.fetch(new Request('http://localhost/healthz'))).json()) as any).dispatch, 'enabled');
     assert.equal(((await (await off.fetch(new Request('http://localhost/healthz'))).json()) as any).dispatch, 'disabled');
   });
+
+  it('FAILED 任务可重试并离开终态（force 覆盖终态保护）', async () => {
+    // 先创建任务，再用回调把它置为 FAILED
+    const storage = createMemoryStorage();
+    const app = buildRoutes({ ...BASE_CFG, github: { pat: 'x', owner: 'o', repo: 'r', eventType: 'hypit-task', callbackUrl: '' } }, storage);
+    globalThis.fetch = (async () => new Response(null, { status: 204 })) as typeof fetch;
+    const created = (await (await app.fetch(new Request('http://localhost/api/v1/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    }))).json()) as any;
+    assert.equal(created.status, 'DISPATCHED');
+    // 模拟失败回调
+    await storage.tasks.markStatus(created.id, 'FAILED', 'SVML compile check failed');
+    const failed = await storage.tasks.get(created.id);
+    assert.equal(failed?.status, 'FAILED');
+    assert.equal(failed?.error, 'SVML compile check failed');
+    // 重试：应重新派发并离开终态，同时清空错误
+    const res = await app.fetch(new Request(`http://localhost/api/v1/tasks/${created.id}`, { method: 'POST' }));
+    assert.equal(res.status, 200);
+    const after = (await res.json()) as any;
+    assert.equal(after.status, 'DISPATCHED', 'FAILED 任务重试后应为 DISPATCHED');
+    assert.equal(after.error, undefined, '重试派发后应清空错误');
+  });
 });
 
 describe('产物上传回调 /api/v1/callback/artifact', () => {
