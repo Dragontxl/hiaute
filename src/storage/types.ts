@@ -66,6 +66,14 @@ export interface ObjectStore {
   list(options?: ListOptions): Promise<ListResult>;
   /** 创建目录标记（R2 为空对象 / FS 为实际目录）。 */
   createDirectory(prefix: string): Promise<void>;
+  /**
+   * R2 原生 multipart 支持（服务端分片合并，避免大文件超时）。
+   * 非 R2 驱动（memory/FS）为 false，分片上传走进程内合并。
+   */
+  readonly multipart?: boolean;
+  beginMultipart?(key: string, contentType?: string): Promise<void>;
+  uploadMultipartPart?(key: string, partNumber: number, body: ArrayBuffer | Uint8Array): Promise<{ totalParts: number; etag: string }>;
+  completeMultipart?(key: string): Promise<{ size: number; etag?: string }>;
 }
 
 /** 任务创建入参。 */

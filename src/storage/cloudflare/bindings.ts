@@ -59,6 +59,30 @@ export interface R2Bucket {
   get(key: string): Promise<R2ObjectBody | null>;
   delete(keys: string | string[]): Promise<void>;
   list(options?: { prefix?: string; delimiter?: string; limit?: number; cursor?: string }): Promise<R2ListResult>;
+  // R2 原生 multipart upload（服务端分片合并，避免 worker 拉取整文件）
+  createMultipartUpload(key: string, options?: { httpMetadata?: { contentType?: string } }): Promise<R2MultipartUpload>;
+  uploadPart(
+    key: string,
+    uploadId: string,
+    partNumber: number,
+    value: ReadableStream | ArrayBuffer | Uint8Array | Blob | string,
+  ): Promise<R2UploadedPart>;
+  completeMultipartUpload(key: string, uploadId: string, uploadedParts: Array<{ partNumber: number; etag: string }>): Promise<R2Object>;
+  abortMultipartUpload(key: string, uploadId: string): Promise<void>;
+  resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
+}
+
+export interface R2MultipartUpload {
+  key: string;
+  uploadId: string;
+  uploadPart(partNumber: number, value: ReadableStream | ArrayBuffer | Uint8Array | Blob | string): Promise<R2UploadedPart>;
+  complete(uploadedParts: Array<{ partNumber: number; etag: string }>): Promise<R2Object>;
+  abort(): Promise<void>;
+}
+
+export interface R2UploadedPart {
+  partNumber: number;
+  etag: string;
 }
 
 /* ---------- Durable Objects ---------- */

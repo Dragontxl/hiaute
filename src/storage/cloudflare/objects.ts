@@ -27,6 +27,7 @@ function toBody(obj: R2ObjectBody): ObjectBody {
 }
 
 export class R2ObjectStore implements ObjectStore {
+  readonly multipart = true;
   constructor(private bucket: R2Bucket, private publicUrl?: string) {}
 
   async put(key: string, body: ArrayBuffer | Uint8Array | string, contentType?: string): Promise<string> {
@@ -37,6 +38,41 @@ export class R2ObjectStore implements ObjectStore {
   getUrl(key: string): string {
     if (!this.publicUrl) return `r2://${key}`;
     return `${this.publicUrl.replace(/\/$/, '')}/${key}`;
+  }
+
+  /** R2 原生 multipart 辅助：跨请求状态存到临时对象（worker 无状态，uploadId 必须持久化）。 */
+  private mpStateKey(key: string): string {
+    return `__mpstate:${key}`;
+  }
+
+  /** 开始 multipart：创建并持久化状态（uploadId + 已传 parts），返回是否"由本片创建"。 */
+  async beginMultipart(key: string, contentType?: string): Promise<void> {
+    const up = await this.bucket.createMultipartUpload(key, contentType ? { httpMetadata: { contentType } } : undefined);
+    const state = JSON.stringify({ uploadId: up.uploadId, parts: [] });
+    await this.bucket.put(this.mpStateKey(key), state, { httpMetadata: { contentType: 'application/json' } });
+  }
+
+  /** 上传一片：读状态 → uploadPart → 追加 etag → 存回。返回累计 part 数。 */
+  async uploadMultipartPart(key: string, partNumber: number, body: ArrayBuffer | Uint8Array): Promise<{ totalParts: number; etag: string }> {
+    const stateObj = await this.bucket.get(this.mpStateKey(key));
+    if (!stateObj) throw new Error(`multipart state missing for ${key}`);
+    const state = JSON.parse(await stateObj.text()) as { uploadId: string; parts: Array<{ partNumber: number; etag: string }> };
+    const part = await this.bucket.uploadPart(key, state.uploadId, partNumber, body);
+    state.parts.push({ partNumber: part.partNumber, etag: part.etag });
+    state.parts.sort((a, b) => a.partNumber - b.partNumber);
+    await this.bucket.put(this.mpStateKey(key), JSON.stringify(state), { httpMetadata: { contentType: 'application/json' } });
+    return { totalParts: state.parts.length, etag: part.etag };
+  }
+
+  /** 完成合并：completeMultipartUpload + 清理状态。 */
+  async completeMultipart(key: string): Promise<{ size: number; etag?: string }> {
+    const stateObj = await this.bucket.get(this.mpStateKey(key));
+    if (!stateObj) throw new Error(`multipart state missing for ${key}`);
+    const state = JSON.parse(await stateObj.text()) as { uploadId: string; parts: Array<{ partNumber: number; etag: string }> };
+    if (state.parts.length === 0) throw new Error(`multipart has no parts for ${key}`);
+    const done = await this.bucket.completeMultipartUpload(key, state.uploadId, state.parts);
+    await this.bucket.delete(this.mpStateKey(key));
+    return { size: done.size ?? 0, ...(done.etag ? { etag: done.etag } : {}) };
   }
 
   async delete(prefixOrKey: string): Promise<void> {

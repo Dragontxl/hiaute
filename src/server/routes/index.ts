@@ -240,6 +240,24 @@ export function buildRoutes(cfg: AppConfig, storage: StorageBundle, studio?: Stu
       if (buf.byteLength > MAX_CHUNK_SIZE) {
         return c.json({ error: 'chunk too large', detail: `max ${MAX_CHUNK_SIZE} bytes` }, 413);
       }
+
+      // R2 原生 multipart：服务端分片合并，避免整文件经 worker 内存（大文件不超时）
+      if (storage.objects.multipart && storage.objects.beginMultipart && storage.objects.uploadMultipartPart && storage.objects.completeMultipart) {
+        const partNumber = idx + 1; // R2 partNumber 从 1 开始
+        if (idx === 0) {
+          await storage.objects.beginMultipart(key, contentType);
+        }
+        const { totalParts } = await storage.objects.uploadMultipartPart(key, partNumber, buf);
+        if (idx === total - 1) {
+          const done = await storage.objects.completeMultipart(key);
+          log.info('artifact uploaded to R2 (multipart)', { key, bytes: done.size, parts: total });
+          return c.json({ key, size: done.size, contentType, parts: total, merged: true }, 201);
+        }
+        log.debug('artifact multipart part cached', { key, part: partNumber, total, bytes: buf.byteLength });
+        return c.json({ key, chunk: idx, total, received: buf.byteLength }, 201);
+      }
+
+      // 非 R2（memory/FS）兜底：缓存各片到临时键，最后一片读回合并
       const chunkKey = `chunk:${key}:${idx}`;
       await storage.objects.put(chunkKey, buf, 'application/octet-stream');
 
