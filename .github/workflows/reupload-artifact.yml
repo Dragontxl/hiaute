@@ -1,0 +1,41 @@
+# 一次性：补传已失败上传的 final.mp4 到 R2 对应项目目录。
+# 手动触发 → 下载 artifact → 解压 → 分片重传到控制面 R2（新逻辑已修 413）。
+name: reupload-artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifactId:
+        description: "GitHub Actions artifact id（任务日志里 Artifacts 那行）"
+        required: true
+        type: string
+      prefix:
+        description: "R2 目标目录，如 tasks/骂王朗-副本_202609271057/"
+        required: true
+        type: string
+      fileName:
+        description: "要重传的文件名（默认 final.mp4）"
+        required: false
+        default: "final.mp4"
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  reupload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      HYPITAPP_API_TOKEN: ${{ secrets.HYPITAPP_API_TOKEN }}
+      HYPITAPP_URL: "https://hypitapp.ygtxl.dpdns.org"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Re-upload artifact to R2
+        run: |
+          node scripts/reupload-artifact.mjs "${{ inputs.artifactId }}" "${{ inputs.prefix }}" "${{ inputs.fileName }}"
