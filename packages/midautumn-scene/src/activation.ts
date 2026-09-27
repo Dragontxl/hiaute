@@ -97,7 +97,7 @@ const component: ComponentPackage = {
 export const decodeSurface: StructuredSurfaceHandler = ({ element, resolveReference }) => {
   assertAttributes(element, [
     "id", "timeline", "canvas", "font",
-    "title", "subtitle", "sky", "moon", "entrance-frames", "rabbit",
+    "title", "subtitle", "sky", "moon", "variant", "entrance-frames",
     ...temporalWindowAttributeNames,
   ]);
   const id = textAttribute(element, "id");
@@ -112,16 +112,17 @@ export const decodeSurface: StructuredSurfaceHandler = ({ element, resolveRefere
     return found;
   };
 
-  const rabbitRaw = element.attributes.rabbit;
-  const rabbit = rabbitRaw === "true" || (typeof rabbitRaw === "object" && rabbitRaw !== null && "value" in rabbitRaw && rabbitRaw.value === true);
+  const variantRaw = element.attributes.variant === undefined ? "" : textAttribute(element, "variant");
+  const VARIANTS = ["moon", "rabbit", "family", "mooncake", "osmanthus", "lantern"] as const;
+  const variant = (VARIANTS as readonly string[]).includes(variantRaw) ? (variantRaw as (typeof VARIANTS)[number]) : "moon";
   const options: SceneOptions = {
     id,
     title: textAttribute(element, "title"),
+    variant,
     ...(element.attributes.subtitle !== undefined ? { subtitle: textAttribute(element, "subtitle") } : {}),
     ...(element.attributes.sky !== undefined ? { sky: textAttribute(element, "sky") } : {}),
     ...(element.attributes.moon !== undefined ? { moon: textAttribute(element, "moon") } : {}),
     entranceFrames: Number(element.attributes["entrance-frames"] ?? "20"),
-    ...(rabbit ? { rabbit: true } : {}),
   };
 
   const records = [
@@ -197,15 +198,15 @@ const declaration = {
       ...temporalWindowAttributeVocabulary,
       ...["id", "title", "canvas", "font"].map((name) => ({ name, kind: "expression" as const, required: true, summary: name })),
       { name: "subtitle", kind: "literal" as const, required: false, summary: "Secondary caption text." },
+      { name: "variant", kind: "literal" as const, required: false, summary: "Scene variant: moon|rabbit|family|mooncake|osmanthus|lantern (default moon)." },
       { name: "sky", kind: "literal" as const, required: false, summary: "Sky gradient top color (hex)." },
       { name: "moon", kind: "literal" as const, required: false, summary: "Moon color (hex)." },
-      { name: "rabbit", kind: "literal" as const, required: false, summary: "Draw the moon rabbit." },
       { name: "entrance-frames", kind: "literal" as const, required: false, summary: "Fade-in duration in frames; defaults to 20." },
     ],
     children: [],
     ports: [{ name: "track", type: compositionTypes.visualTrack, summary: "The complete mid-autumn scene." }],
     example:
-      '<midautumn:Scene id="night" timeline={animation.timeline} canvas={canvas} font={font} during="program" title="中秋节" subtitle="月圆人团圆" rabbit="true"/>',
+      '<midautumn:Scene id="night" timeline={animation.timeline} canvas={canvas} font={font} during="program" title="中秋节" subtitle="月圆人团圆" variant="rabbit"/>',
   },
 };
 

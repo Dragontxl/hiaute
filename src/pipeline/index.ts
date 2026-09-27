@@ -279,7 +279,7 @@ export class Pipeline {
     const CODE_TARGET_SECONDS = Math.min(Number(process.env.CODE_TARGET_SECONDS ?? 24), ctx.maxDurationSeconds);
     const freeformTarget = ctx.renderMode === 'code' ? CODE_TARGET_SECONDS : ctx.maxShots * cap;
     const targetSeconds = Math.min(art.referenceSeconds ?? freeformTarget, ctx.maxDurationSeconds);
-    const durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: ctx.maxShots });
+    let durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: ctx.maxShots });
 
     // 先落盘脚本再校验：SVML 是「生成后编辑」的入口（§5 必要条件 3）
     const svml = await ctx.planner.writeScript({
@@ -294,6 +294,15 @@ export class Pipeline {
     // 无论 code 还是 llm 模式，brief 都已由 LLM 展开成脚本；code 模式据此渲染画面文字
     art.scriptShots = parseScriptShots(svml);
     log.info('script written', { scriptPath, bytes: Buffer.byteLength(svml), scriptShots: art.scriptShots.length });
+
+    // code 模式：按脚本分镜数切分镜头（每镜 >=2s），让画面随脚本多镜切换。
+    // HyperFrames 每帧软渲染约 1s，故 code 模式镜头短、总时长短。
+    if (ctx.renderMode === 'code') {
+      const n = Math.max(2, Math.min(art.scriptShots.length || 6, ctx.maxShots, Math.max(2, Math.floor(targetSeconds / 2))));
+      const per = Math.max(2, Math.round(targetSeconds / n));
+      durations = Array.from({ length: n }, () => per);
+      log.info('code shot plan (by script)', { shots: n, perShot: per, totalSeconds: n * per, scriptShots: art.scriptShots.length });
+    }
 
     if (await ctx.kernel.available()) {
       try {

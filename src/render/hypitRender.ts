@@ -64,6 +64,22 @@ export function cumulativeEnds(secondsPerShot: number[]): number[] {
   return ends;
 }
 
+type SceneVariant = "moon" | "rabbit" | "family" | "mooncake" | "osmanthus" | "lantern";
+
+/** 按分镜文本关键词推断场景变体（覆盖中秋常见意象）。 */
+function variantFor(text: string): SceneVariant {
+  const t = text;
+  if (/玉兔|捣药|月兔|兔/.test(t)) return "rabbit";
+  if (/月饼|吃饼|点心|甜品/.test(t)) return "mooncake";
+  if (/桂花|飘香|花/.test(t)) return "osmanthus";
+  if (/团圆|阖家|家人|围坐|赏月|一家人|团聚|家庭/.test(t)) return "family";
+  if (/灯笼|花灯|灯/.test(t)) return "lantern";
+  return "moon";
+}
+
+/** 兜底轮换顺序：当多镜无关键词命中时，避免画面完全重复。 */
+const VARIANT_CYCLE: SceneVariant[] = ["moon", "rabbit", "osmanthus", "family", "mooncake", "lantern"];
+
 export async function renderHypitTask(opts: HypitRenderOptions): Promise<HypitRenderResult> {
   const templateDir = resolve(opts.templateDir ?? join(process.cwd(), 'docker/templates/code-render'));
   const workDir = resolve(opts.workDir);
@@ -81,23 +97,27 @@ export async function renderHypitTask(opts: HypitRenderOptions): Promise<HypitRe
 
   await mkdir(workDir, { recursive: true });
 
-  // 组装 .svml：每镜一个 midautumn:Scene（时间窗按 start/end 切分）
+  // 组装 .svml：每镜一个 midautumn:Scene（按内容选变体，时间窗按 start/end 切分）
   const sceneLines: string[] = [];
   opts.shots.forEach((shot, i) => {
     const start = i === 0 ? 0 : ends[i - 1]!;
     const end = ends[i]!;
     const sceneId = `night-${i + 1}`;
+    const text = `${shot.title} ${shot.subtitle ?? ""}`;
+    const matched = variantFor(text);
+    // 无关键词命中（moon 兜底）时按序轮换，避免相邻镜头画面重复
+    const variant = matched === "moon" && !/月|夜空|明月/.test(text) ? VARIANT_CYCLE[i % VARIANT_CYCLE.length]! : matched;
     const attrs = [
       `id="${sceneId}"`,
       'timeline={animation.timeline}',
       'canvas={canvas}',
       'font={font}',
       `start="${start}s" end="${end}s"`,
+      `variant="${variant}"`,
       `title="${xmlEscape(shot.title)}"`,
       ...(shot.subtitle ? [`subtitle="${xmlEscape(shot.subtitle)}"`] : []),
-      'rabbit="true"',
     ];
-    sceneLines.push(`  <midautumn:Scene ${attrs.join(' ')}/>`);
+    sceneLines.push(`  <midautumn:Scene ${attrs.join(" ")}/>`);
   });
 
   const svml = `<?svml using="@hypit/markup@1"?>
