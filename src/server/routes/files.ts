@@ -224,34 +224,35 @@ export function buildFileRoutes(storage: StorageBundle): Hono {
   });
 
   /** 下载文件（Content-Disposition: attachment）。R2 配置了 PUBLIC_URL 时直接重定向。 */
+  // 下载（Attachment）：同源流式返回，避免 302 到 R2 跨域导致前端 fetch 被 CORS 拦截。
   app.get('/download', async (c) => {
     const key = readKey(c, 'key', 2048);
     if (!key) return c.json({ error: 'invalid key', detail: 'key is required' }, 400);
 
-    const directUrl = store.getUrl(key);
-    if (directUrl.startsWith('http')) {
-      return new Response(null, {
-        status: 302,
+    const body = await store.get(key);
+    if (!body) return c.json({ error: 'not found', detail: `key: ${key}` }, 404);
+
+    const name = encodeURIComponent(key.split('/').pop() || key);
+    const contentType = body.contentType || mimeFromKey(key);
+
+    // R2 提供只读流：直接透传响应体，大文件不整块缓冲进 worker 内存
+    if (body.stream) {
+      return new Response(body.stream(), {
+        status: 200,
         headers: {
-          'location': directUrl,
-          'content-disposition': `attachment; filename="${encodeURIComponent(key.split('/').pop() || key)}"`,
+          'content-type': contentType,
+          'content-disposition': `attachment; filename="${name}"`,
         },
       });
     }
 
-    const body = await store.get(key);
-    if (!body) return c.json({ error: 'not found', detail: `key: ${key}` }, 404);
-
     const buf = await body.arrayBuffer();
-    const name = key.split('/').pop() || key;
-    const contentType = body.contentType || mimeFromKey(key);
-
     return new Response(buf, {
       status: 200,
       headers: {
         'content-type': contentType,
         'content-length': String(buf.byteLength),
-        'content-disposition': `attachment; filename="${encodeURIComponent(name)}"`,
+        'content-disposition': `attachment; filename="${name}"`,
       },
     });
   });

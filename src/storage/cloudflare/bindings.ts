@@ -41,6 +41,8 @@ export interface R2ObjectBody extends R2Object {
   arrayBuffer(): Promise<ArrayBuffer>;
   text(): Promise<string>;
   blob(): Promise<Blob>;
+  /** R2 运行时提供的只读流（流式下载大文件，避免整文件缓冲进 worker 内存）。 */
+  body: ReadableStream;
 }
 
 export interface R2ListResult {

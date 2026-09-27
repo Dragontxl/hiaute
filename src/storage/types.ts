@@ -33,6 +33,8 @@ export interface ObjectMeta {
 export interface ObjectBody extends ObjectMeta {
   arrayBuffer(): Promise<ArrayBuffer>;
   text(): Promise<string>;
+  /** 可选的只读流（R2 提供；用于大文件流式下载，避免整文件缓冲）。 */
+  stream?(): ReadableStream;
 }
 
 /** 列举选项。 */

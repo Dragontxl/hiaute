@@ -23,6 +23,7 @@ function toBody(obj: R2ObjectBody): ObjectBody {
     ...toMeta(obj),
     arrayBuffer: () => obj.arrayBuffer(),
     text: () => obj.text(),
+    stream: () => obj.body,
   };
 }
 
