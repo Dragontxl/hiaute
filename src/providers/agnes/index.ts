@@ -41,10 +41,15 @@ export function framesFor(seconds: number, fps = VIDEO_FPS, cap = V20_MAX_FRAMES
 }
 
 /** 按模型家族选择正确 mode 枚举。 */
-function modeFor(model: string, useKeyframe: boolean): string {
+function modeFor(model: string, input: VideoGenerateInput): string {
   const is25 = model.includes('2.5');
-  if (useKeyframe) return is25 ? 'keyframe' : 'keyframes';
-  return is25 ? 'text' : 'ti2vid';
+  if (is25) {
+    if (input.referenceImages && input.referenceImages.length > 0) return 'reference';
+    if (input.imageUrl) return 'keyframe';
+    return 'text';
+  }
+  // v2.0：单图走 ti2vid/keyframes，无图 ti2vid
+  return input.imageUrl ? 'keyframes' : 'ti2vid';
 }
 
 /**
@@ -53,20 +58,26 @@ function modeFor(model: string, useKeyframe: boolean): string {
  */
 export function buildVideoBody(model: string, input: VideoGenerateInput): Record<string, unknown> {
   const is25 = model.includes('2.5');
-  const useKeyframe = Boolean(input.imageUrl);
   const base: Record<string, unknown> = {
     model,
     prompt: input.prompt,
-    mode: modeFor(model, useKeyframe),
+    mode: modeFor(model, input),
   };
   if (is25) {
-    return {
+    const body: Record<string, unknown> = {
       ...base,
       seconds: String(input.seconds),
       size: '720P',
       aspect_ratio: '16:9',
-      ...(useKeyframe ? { first_frame: input.imageUrl } : {}),
     };
+    // reference 模式：images 参考图列表（人物/风格一致性），prompt 用 <Picture N> 指代
+    if (input.referenceImages && input.referenceImages.length > 0) {
+      body.images = input.referenceImages.slice(0, 5);
+    } else if (input.imageUrl) {
+      // keyframe 模式：首帧
+      body.first_frame = input.imageUrl;
+    }
+    return body;
   }
   // v2.0：时长由 num_frames / frame_rate 决定；单图走 image
   return {
@@ -75,7 +86,7 @@ export function buildVideoBody(model: string, input: VideoGenerateInput): Record
     num_frames: framesFor(input.seconds, VIDEO_FPS),
     width: 1152,
     height: 768,
-    ...(useKeyframe ? { image: input.imageUrl } : {}),
+    ...(input.imageUrl ? { image: input.imageUrl } : {}),
   };
 }
 

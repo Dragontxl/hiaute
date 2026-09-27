@@ -28,8 +28,10 @@ export interface ImageGenerateInput {
 
 export interface VideoGenerateInput {
   prompt: string;
-  /** 参考图（图生视频）。 */
+  /** 参考图（keyframe 首帧，图生视频）。 */
   imageUrl?: string;
+  /** 参考图列表（reference 模式，人物/风格一致性，≤5 张）；prompt 可用 <Picture N> 指代。 */
+  referenceImages?: string[];
   /** 单条时长（秒）——不得超 capabilities.maxSecondsPerShot。 */
   seconds: number;
   resolution: '480p' | '720p' | '1080p';

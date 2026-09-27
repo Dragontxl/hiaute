@@ -48,7 +48,7 @@
       "use": "@hypitapp/provider-agnes-video",
       "config": {
         "baseUrl": "https://apihub.agnes-ai.com/v1",
-        "modelName": "agnes-video-v2.0",
+        "modelName": "agnes-video-2.5-flash",
         "cooldown_seconds": 60,
         "accounts": [
           { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000 },

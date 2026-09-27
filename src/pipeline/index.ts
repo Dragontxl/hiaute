@@ -23,6 +23,7 @@ import type { Stage, TaskCheckpoint, VideoAnalysis } from '../types/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import { Planner, planShotDurations } from '../planner/index.js';
 import { downloadReference } from './download.js';
+import { uploadFrameToR2 } from './r2frame.js';
 import type { HypitKernel } from '../kernel/index.js';
 import type { ObjectStore } from '../storage/types.js';
 import { renderHypitTask, type RenderShot } from '../render/hypitRender.js';
@@ -279,7 +280,10 @@ export class Pipeline {
     const CODE_TARGET_SECONDS = Math.min(Number(process.env.CODE_TARGET_SECONDS ?? 24), ctx.maxDurationSeconds);
     const freeformTarget = ctx.renderMode === 'code' ? CODE_TARGET_SECONDS : ctx.maxShots * cap;
     const targetSeconds = Math.min(art.referenceSeconds ?? freeformTarget, ctx.maxDurationSeconds);
-    let durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: ctx.maxShots });
+    // 参考视频模式：不复刻压缩分镜，保留分析出的全部场景（每个分析分镜 → 一个生成分镜）。
+    // 只有真正的自由创作（无参考视频）才受 maxShots 成本控制。
+    const effectiveMaxShots = analysis && art.referenceSeconds ? Math.max(ctx.maxShots, analysis.shots.length) : ctx.maxShots;
+    let durations = planShotDurations(analysis, targetSeconds, cap, { maxShots: effectiveMaxShots });
 
     // 先落盘脚本再校验：SVML 是「生成后编辑」的入口（§5 必要条件 3）
     const svml = await ctx.planner.writeScript({
@@ -401,15 +405,20 @@ export class Pipeline {
         commitTail = commitTail.then(() => ctx.onCheckpoint?.(ctx.checkpoint));
       };
       await runWithConcurrency(llmJobs, MAX_PARALLEL, async ({ index: i, seconds, dest, framePath }) => {
-        // 抽帧作为图生视频的首帧（仅当对象存储给出可公网访问的 URL 时可用）
+        // 参考帧作为图生视频首帧：优先上传到控制面 R2 拿公开直链（Agnes 图生视频 ti2vid）。
+        // 本地/常驻形态 store.put 返回 memory:// 或 file:// 时不上传，直接 fallback 纯文生。
         let imageUrl: string | undefined;
         if (framePath) {
-          const url = await ctx.store.put(
+          const remote = await ctx.store.put(
             `tasks/${ctx.taskId}/frames/shot-${pad(i)}.jpg`,
             await readFile(framePath),
             'image/jpeg',
           );
-          if (/^https?:\/\//i.test(url)) imageUrl = url;
+          imageUrl = /^https?:\/\//i.test(remote) ? remote : undefined;
+          if (!imageUrl) {
+            // GHA 内 FS store 返回 file://，改用 callback/artifact 上传到控制面 R2 拿直链
+            imageUrl = (await uploadFrameToR2(framePath, i)) ?? undefined;
+          }
         }
 
         // 简单重试：单片段失败最多重试 SHOT_RETRIES 次；仍失败则跳过该片段（不抛错）。
@@ -418,10 +427,10 @@ export class Pipeline {
         for (let attempt = 0; attempt <= SHOT_RETRIES; attempt += 1) {
           try {
             const result = await ctx.providers.agnesVideo.generate({
-              prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i),
+              prompt: shotPromptFor(ctx.brief, art.scriptShots?.[i], analysis, i, imageUrl ? '<Picture 1> 保持该参考图的人物与美术风格一致。' : undefined),
               seconds,
               resolution: ctx.outputResolution,
-              ...(imageUrl ? { imageUrl } : {}),
+              ...(imageUrl ? { referenceImages: [imageUrl] } : {}),
             });
             await downloadFile(result.videoUrl, dest);
             art.clipPaths[i] = dest;
@@ -718,6 +727,7 @@ function shotPromptFor(
   scriptShot: { description: string; onScreenText?: string } | undefined,
   analysis: VideoAnalysis | undefined,
   i: number,
+  extraDirective?: string,
 ): string {
   const parts: string[] = [];
   if (brief) parts.push(`视频主题：${brief}`);
@@ -734,6 +744,7 @@ function shotPromptFor(
       parts.push(`第 ${i + 1} 个镜头。`);
     }
   }
+  if (extraDirective) parts.push(extraDirective);
   return parts.join('\n');
 }
 
