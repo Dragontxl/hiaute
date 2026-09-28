@@ -23,6 +23,8 @@ import type { AccountLease, AccountState, ApiType } from '../types/index.js';
 interface AccountRuntime extends AccountState {
   /** 当日已用次数（用于 dailyLimit 判定；进程重启即重置，见 §10 风险）。 */
   usedToday: number;
+  /** 当日已用生成秒数（用于 dailySecondsLimit 判定，仅视频类有意义）。 */
+  usedSecondsToday: number;
   /** 并发占用计数。 */
   inflight: number;
 }
@@ -43,7 +45,7 @@ export class AccountPool {
     this.masterKey = masterKey;
     this.deps = deps;
     for (const a of accounts) {
-      this.accounts.set(a.id, { ...a, usedToday: 0, inflight: 0 });
+      this.accounts.set(a.id, { ...a, usedToday: 0, usedSecondsToday: 0, inflight: 0 });
     }
   }
 
@@ -60,8 +62,15 @@ export class AccountPool {
    */
   hasAvailable(apiType: ApiType): boolean {
     return [...this.accounts.values()].some(
-      (a) => a.apiType === apiType && a.isActive && a.usedToday < a.dailyLimit,
+      (a) => a.apiType === apiType && a.isActive && this.withinDailyLimits(a),
     );
+  }
+
+  /** 是否仍在每日额度内（请求数次上限 + 视频生成秒数上限）。 */
+  private withinDailyLimits(a: AccountRuntime): boolean {
+    if (a.usedToday >= a.dailyLimit) return false;
+    if (a.dailySecondsLimit !== undefined && a.usedSecondsToday >= a.dailySecondsLimit) return false;
+    return true;
   }
 
   /**
@@ -75,7 +84,7 @@ export class AccountPool {
         a.apiType === apiType &&
         a.isActive &&
         a.inflight < a.maxConcurrent &&
-        a.usedToday < a.dailyLimit &&
+        this.withinDailyLimits(a) &&
         a.apiKeyEncrypted,
     );
     if (candidates.length === 0) return null;
@@ -92,16 +101,17 @@ export class AccountPool {
 
     const picked = this.accounts.get(grant.accountId);
     if (!picked) {
-      await this.deps.leases.release(apiType, grant.accountId, now);
+      await this.deps.leases.release(apiType, grant.accountId, 0, now);
       return null;
     }
 
-    // 授予后才消耗限流配额：避免为「没挑中」的请求白扣额度
+    // 授予后才消耗限流配额：避免为「没挑中」的请求白扣额度。
+    // 传入 accountId：视频等 perAccount 规则按账户隔离 RPM（否则整池共享上限会超发）。
     if (this.deps.rate) {
-      for (const [key, rule] of rateRulesFor(apiType)) {
+      for (const [key, rule] of rateRulesFor(apiType, picked.id)) {
         const r = await this.deps.rate.consume(key, rule, now);
         if (!r.allowed) {
-          await this.deps.leases.release(apiType, grant.accountId, now);
+          await this.deps.leases.release(apiType, grant.accountId, 0, now);
           log.debug('rate limited; lease returned', { apiType, key, retryAfterMs: r.retryAfterMs });
           return null;
         }
@@ -117,11 +127,15 @@ export class AccountPool {
     log.info('account acquired', { alias: picked.alias, apiType, leasedUntil: grant.leasedUntil });
 
     const accountId = grant.accountId;
-    const release = async (): Promise<void> => {
+    const release = async (opts?: { cooldownMs?: number }): Promise<void> => {
       picked.inflight = Math.max(0, picked.inflight - 1);
-      picked.cooldownUntil = null;
-      await this.deps.leases.release(apiType, accountId, Date.now());
-      log.debug('account released', { alias: picked.alias });
+      // 缺省按账户配置冷却：这是视频 RPM=1 的主要执行点（成功释放后也需静默一个窗口）。
+      // cooldownMs=0 用于「账户本身没坏」的场景（如上游全局队列满）。
+      const cooldownMs = opts?.cooldownMs ?? picked.cooldownSeconds * 1000;
+      const nowMs = Date.now();
+      picked.cooldownUntil = cooldownMs > 0 ? nowMs + cooldownMs : null;
+      await this.deps.leases.release(apiType, accountId, cooldownMs, nowMs);
+      log.debug('account released', { alias: picked.alias, cooldownMs });
     };
 
     return { account: picked, apiKey, release };
@@ -135,10 +149,13 @@ export class AccountPool {
     const a = this.accounts.get(accountId);
     if (!a) return;
     a.inflight = Math.max(0, a.inflight - 1);
-    a.cooldownUntil = null;
+    // 临时错误同样进入冷却（否则 429/503 会立刻换回同一账户形成风暴）。
+    const cooldownMs = a.cooldownSeconds * 1000;
+    const nowMs = Date.now();
+    a.cooldownUntil = cooldownMs > 0 ? nowMs + cooldownMs : null;
     a.healthCheckMsg = reason;
-    a.lastHealthCheck = Date.now();
-    await this.deps.leases.markFailure(a.apiType, accountId, reason);
+    a.lastHealthCheck = nowMs;
+    await this.deps.leases.markFailure(a.apiType, accountId, reason, cooldownMs, nowMs);
     log.warn('account failure', { alias: a.alias, reason });
   }
 
@@ -147,6 +164,23 @@ export class AccountPool {
     const a = this.accounts.get(accountId);
     if (!a) return;
     await this.deps.leases.markSuccess(a.apiType, accountId);
+  }
+
+  /**
+   * 记账单次视频生成消耗的秒数（对齐 Agnes 500s/账户 的真实额度）。
+   * 达到 dailySecondsLimit 后该账户不再参与 acquire，直到进程重启（§10 风险）。
+   */
+  async recordSecondsUsed(accountId: string, seconds: number): Promise<void> {
+    const a = this.accounts.get(accountId);
+    if (!a || !Number.isFinite(seconds) || seconds <= 0) return;
+    a.usedSecondsToday += seconds;
+    if (a.dailySecondsLimit !== undefined && a.usedSecondsToday >= a.dailySecondsLimit) {
+      log.warn('account daily seconds exhausted', {
+        alias: a.alias,
+        usedSecondsToday: a.usedSecondsToday,
+        dailySecondsLimit: a.dailySecondsLimit,
+      });
+    }
   }
 
   /**

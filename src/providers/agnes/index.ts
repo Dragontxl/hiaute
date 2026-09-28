@@ -209,21 +209,30 @@ export class AgnesVideoProvider implements Provider {
 
   /** 用指定模型提交一次完整调用（含账户重试，不含模型回退）。 */
   private async _submitWithModel(input: VideoGenerateInput, model: string): Promise<VideoGenerateResult> {
-    return withAccountFailover(this.pool, 'agnes-video', async ({ apiKey, baseUrl }) => {
-      const base = baseUrl.replace(/\/$/, '');
-      const origin = new URL(base).origin;
-      const body = buildVideoBody(model, input);
+    return withAccountFailover(
+      this.pool,
+      'agnes-video',
+      async ({ accountId, apiKey, baseUrl }) => {
+        const base = baseUrl.replace(/\/$/, '');
+        const origin = new URL(base).origin;
+        const body = buildVideoBody(model, input);
 
-      const submit = await postJson<{ video_id?: string; task_id?: string; id?: string }>(
-        `${base}/videos`,
-        body,
-        { authorization: `Bearer ${apiKey}` },
-      );
-      const videoId = submit.video_id ?? submit.task_id ?? submit.id;
-      if (!videoId) throw new Error('agnes-video: 创建任务未返回 video_id');
-      log.info('agnes-video submitted', { videoId, model, mode: body.mode, seconds: input.seconds, numFrames: body.num_frames });
-      return await this.pollVideo(origin, apiKey, videoId, model, input.seconds);
-    });
+        const submit = await postJson<{ video_id?: string; task_id?: string; id?: string }>(
+          `${base}/videos`,
+          body,
+          { authorization: `Bearer ${apiKey}` },
+        );
+        const videoId = submit.video_id ?? submit.task_id ?? submit.id;
+        if (!videoId) throw new Error('agnes-video: 创建任务未返回 video_id');
+        log.info('agnes-video submitted', { videoId, model, mode: body.mode, seconds: input.seconds, numFrames: body.num_frames });
+        const result = await this.pollVideo(origin, apiKey, videoId, model, input.seconds);
+        // 记账真实生成秒数（对齐 500s/账户/天；仅成功生成才计入）。
+        await this.pool.recordSecondsUsed(accountId, result.seconds);
+        return result;
+      },
+      // 视频生成慢且额度紧（RPM=1/账户）：退避起点拉长、轮次收敛，避免短时猛冲打爆配额。
+      { maxRounds: 4, baseMs: 30_000, capMs: 180_000, poolBusyMs: 20_000 },
+    );
   }
 
   /**

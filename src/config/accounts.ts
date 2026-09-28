@@ -16,6 +16,8 @@ interface RawAccount {
   apiKey?: { store?: string; key?: string };
   priority_weight?: number;
   daily_limit?: number;
+  /** 每日生成秒数上限（仅视频类有意义；Agnes 为 500s/账户）。 */
+  daily_seconds_limit?: number;
   max_concurrent?: number;
   cooldown_seconds?: number;
   model_name?: string;
@@ -72,6 +74,9 @@ export async function loadAccounts(
       idx += 1;
       const key = resolveKey(a);
       const modelName = a.model_name ?? ep.config?.modelName;
+      // 视频类默认按真实额度补一个每日生成秒数上限（500s/账户），避免只按请求数判定。
+      const dailySecondsLimit =
+        a.daily_seconds_limit ?? (apiType === 'agnes-video' ? 500 : undefined);
       out.push({
         id: `${apiType}-${idx}`,
         alias: a.alias,
@@ -83,6 +88,7 @@ export async function loadAccounts(
         priorityWeight: a.priority_weight ?? 50,
         cooldownSeconds: a.cooldown_seconds ?? ep.config?.cooldown_seconds ?? 60,
         dailyLimit: a.daily_limit ?? 1500,
+        ...(dailySecondsLimit !== undefined ? { dailySecondsLimit } : {}),
         isActive: Boolean(key),
         isHealthy: true,
         totalUsage: 0,

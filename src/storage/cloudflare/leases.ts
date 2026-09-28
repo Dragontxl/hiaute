@@ -51,12 +51,12 @@ export class DurableAccountLeaseStore implements AccountLeaseStore {
     return { accountId: data.grant.accountId, alias: data.grant.alias, apiType, leasedUntil: data.grant.leasedUntil };
   }
 
-  async release(apiType: ApiType, accountId: string, now = Date.now()): Promise<void> {
-    await this.post(apiType, { op: 'release', accountId, now });
+  async release(apiType: ApiType, accountId: string, cooldownMs = 0, now = Date.now()): Promise<void> {
+    await this.post(apiType, { op: 'release', accountId, cooldownMs, now });
   }
 
-  async markFailure(apiType: ApiType, accountId: string, reason: string, now = Date.now()): Promise<void> {
-    await this.post(apiType, { op: 'failure', accountId, reason, now });
+  async markFailure(apiType: ApiType, accountId: string, reason: string, cooldownMs = 0, now = Date.now()): Promise<void> {
+    await this.post(apiType, { op: 'failure', accountId, reason, cooldownMs, now });
   }
 
   async markSuccess(apiType: ApiType, accountId: string, now = Date.now()): Promise<void> {

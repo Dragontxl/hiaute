@@ -26,6 +26,11 @@ export interface AccountState {
   cooldownSeconds: number;
   /** 每日调用上限（对齐服务真实免费额度）。 */
   dailyLimit: number;
+  /**
+   * 每日「生成秒数」上限（仅视频类有意义，如 Agnes 500s/账户）。
+   * 未设置则不按秒数判定；视频账户应设置，因为请求数上限无法表达用量。
+   */
+  dailySecondsLimit?: number;
   isActive: boolean;
   isHealthy: boolean;
   healthCheckMsg?: string;
@@ -40,7 +45,11 @@ export interface AccountLease {
   account: AccountState;
   /** 明文密钥（仅存在于内存与本次请求上下文）。 */
   apiKey: string;
-  release: () => Promise<void>;
+  /**
+   * 释放租约。缺省按账户 `cooldownSeconds` 进入冷却（满足 RPM）；
+   * 传 `{ cooldownMs: 0 }` 表示立即归还、不冷却（如上游全局队列满，账户本身没坏）。
+   */
+  release: (opts?: { cooldownMs?: number }) => Promise<void>;
 }
 
 /** Provider 如实上报的能力声明（用于 plan 阶段校验）。 */

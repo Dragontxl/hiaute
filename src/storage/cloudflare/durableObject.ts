@@ -49,6 +49,8 @@ interface LeaseMutateReq {
   op: 'release' | 'failure' | 'success' | 'snapshot';
   accountId?: string;
   reason?: string;
+  /** 释放/失败后的冷却毫秒；>0 时账户在到期前不被再次发放（视频 RPM=1 依赖此机制）。 */
+  cooldownMs?: number;
   now: number;
 }
 interface LeaseSnapshotRes {
@@ -171,14 +173,20 @@ export class AccountLeaseDO {
   }
 
   private async release(req: LeaseMutateReq): Promise<{ ok: boolean }> {
-    if (req.accountId) this.ensure(req.accountId).leasedUntil = null;
+    if (req.accountId) {
+      const s = this.ensure(req.accountId);
+      const cd = req.cooldownMs ?? 0;
+      s.leasedUntil = cd > 0 ? req.now + cd : null;
+    }
     await this.persist();
     return { ok: true };
   }
 
   private async failure(req: LeaseMutateReq): Promise<{ ok: boolean; healthy: boolean }> {
     const s = req.accountId ? this.ensure(req.accountId) : { leasedUntil: null, consecutiveFailures: 0, healthy: true };
-    s.leasedUntil = null;
+    const cd = req.cooldownMs ?? 0;
+    // 临时错误（429/503）也进入冷却，避免失败后被立刻重选造成请求风暴。
+    s.leasedUntil = cd > 0 ? req.now + cd : null;
     // 只有账户级故障（401/403/鉴权）才累计隔离；429/503/5xx/timeout 是临时错误，不隔离
     if (req.accountId && isAccountFaultError(req.reason ?? '')) {
       s.consecutiveFailures += 1;

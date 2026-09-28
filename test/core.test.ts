@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { decryptSecret, encryptSecret, safeEqual, signPayload, verifyPayloadSignature } from '../src/core/crypto.js';
 import { AccountPool } from '../src/core/accountPool.js';
+import { isPoolBusyError, isRetryableError } from '../src/core/retry.js';
+import { rateRulesFor } from '../src/storage/rules.js';
 import { MemoryAccountLeaseStore, MemoryRateLimitBackend } from '../src/storage/memory.js';
 import type { AccountState, ApiType } from '../src/types/index.js';
 
@@ -111,7 +113,8 @@ describe('AccountPool', () => {
   });
 
   it('账户级故障（403）连续 3 次后隔离，acquire 返回 null', async () => {
-    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video' })], MASTER, {
+    // cooldownSeconds=0：隔离测试不叠加冷却，避免冷却掩盖隔离判定
+    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video', cooldownSeconds: 0 })], MASTER, {
       leases: new MemoryAccountLeaseStore(),
     });
     const lease = await pool.acquire('agnes-video');
@@ -123,7 +126,8 @@ describe('AccountPool', () => {
   });
 
   it('临时错误（503/429）不隔离账户，可继续 acquire', async () => {
-    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video' })], MASTER, {
+    // cooldownSeconds=0：只验证「不隔离」，不叠加冷却
+    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video', cooldownSeconds: 0 })], MASTER, {
       leases: new MemoryAccountLeaseStore(),
     });
     const lease = await pool.acquire('agnes-video');
@@ -142,8 +146,23 @@ describe('AccountPool', () => {
     });
     const first = await pool.acquire('agnes-video');
     assert.ok(first);
-    await first!.release();
+    // 显式不冷却，确保 null 只因 dailyLimit 用尽（而非冷却）
+    await first!.release({ cooldownMs: 0 });
     assert.equal(await pool.acquire('agnes-video'), null);
+  });
+
+  it('dailySecondsLimit 用尽后不再发放租约（视频 500s/账户 的真实额度）', async () => {
+    const pool = new AccountPool(
+      [account({ id: 'a1', apiType: 'agnes-video', cooldownSeconds: 0, dailySecondsLimit: 10 })],
+      MASTER,
+      { leases: new MemoryAccountLeaseStore() },
+    );
+    const l1 = await pool.acquire('agnes-video');
+    assert.ok(l1);
+    await l1!.release({ cooldownMs: 0 });
+    await pool.recordSecondsUsed('a1', 10);
+    assert.equal(await pool.acquire('agnes-video'), null);
+    assert.equal(pool.hasAvailable('agnes-video'), false);
   });
 
   it('限流超限时退还租约并返回 null', async () => {
@@ -152,9 +171,9 @@ describe('AccountPool', () => {
       leases: new MemoryAccountLeaseStore(),
       rate,
     });
-    // 先把能力维度的窗口打满（max=30），再用极小窗口复现拒绝路径
+    // 视频为「每账户 RPM=1」：先用掉该账户窗口内唯一的额度，再 acquire 必须被拒
     const t0 = Date.now();
-    for (let i = 0; i < 31; i++) await rate.consume('api:agnes-video', { windowMs: 60_000, max: 30 }, t0);
+    await rate.consume('acct:a1:agnes-video', { windowMs: 60_000, max: 1, perAccount: true }, t0);
     assert.equal(await pool.acquire('agnes-video'), null);
   });
 
@@ -166,8 +185,19 @@ describe('AccountPool', () => {
     assert.ok(l1);
     // 冷却期内同一账户不可再次发放
     assert.equal(await pool.acquire('agnes-video'), null);
-    await l1!.release();
+    // 显式不冷却释放后才可立即复用
+    await l1!.release({ cooldownMs: 0 });
     assert.ok(await pool.acquire('agnes-video'));
+  });
+
+  it('release 默认进入冷却，冷却内不可复用（视频 RPM=1 的核心机制）', async () => {
+    const pool = new AccountPool([account({ id: 'a1', apiType: 'agnes-video', cooldownSeconds: 60 })], MASTER, {
+      leases: new MemoryAccountLeaseStore(),
+    });
+const l1 = await pool.acquire('agnes-video');
+    assert.ok(l1);
+    await l1!.release();
+    assert.equal(await pool.acquire('agnes-video'), null);
   });
 
   it('未启用的账户被跳过', async () => {
@@ -176,5 +206,41 @@ describe('AccountPool', () => {
     });
     assert.equal(await pool.acquire('agnes-video'), null);
     assert.equal(pool.hasAvailable('agnes-video'), false);
+  });
+});
+
+/* ---------------- 限流规则 / 重试分类 ---------------- */
+
+describe('限流规则', () => {
+  it('视频为每账户 RPM=1：键含 accountId', () => {
+    const [key, rule] = rateRulesFor('agnes-video', 'agnes-video-13')[1]!;
+    assert.equal(key, 'acct:agnes-video-13:agnes-video');
+    assert.equal(rule.max, 1);
+    assert.equal(rule.perAccount, true);
+  });
+
+  it('文本类仍为整池上限（键不含 accountId）', () => {
+    const [key, rule] = rateRulesFor('agnes-text', 'agnes-text-1')[1]!;
+    assert.equal(key, 'api:agnes-text');
+    assert.equal(rule.max, 30);
+    assert.notEqual(rule.perAccount, true);
+  });
+});
+
+describe('重试错误分类', () => {
+  it('video_queue_full 归为「上游全局繁忙」，且属于可重试错误', () => {
+    const err = 'HTTP 503: {"code":"video_queue_full","message":"video queue is full"}';
+    assert.equal(isPoolBusyError(err), true);
+    assert.equal(isRetryableError(err), true);
+  });
+
+  it('429 限流不是 pool-busy（应走账户冷却换号）', () => {
+    const err = 'HTTP 429 rate_limit_exceeded for free users';
+    assert.equal(isPoolBusyError(err), false);
+    assert.equal(isRetryableError(err), true);
+  });
+
+  it('401 鉴权失败不是 pool-busy', () => {
+    assert.equal(isPoolBusyError('HTTP 401 unauthorized'), false);
   });
 });

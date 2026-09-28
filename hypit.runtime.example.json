@@ -51,11 +51,11 @@
         "modelName": "agnes-video-2.5-flash",
         "cooldown_seconds": 60,
         "accounts": [
-          { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000 },
-          { "alias": "agnes-2", "apiKey": { "store": "platform", "key": "agnes.api.2" }, "priority_weight": 90,  "daily_limit": 2000 },
-          { "alias": "agnes-3", "apiKey": { "store": "platform", "key": "agnes.api.3" }, "priority_weight": 80,  "daily_limit": 2000 },
-          { "alias": "agnes-4", "apiKey": { "store": "platform", "key": "agnes.api.4" }, "priority_weight": 70,  "daily_limit": 2000 },
-          { "alias": "agnes-5", "apiKey": { "store": "platform", "key": "agnes.api.5" }, "priority_weight": 60,  "daily_limit": 2000 }
+          { "alias": "agnes-1", "apiKey": { "store": "platform", "key": "agnes.api.1" }, "priority_weight": 100, "daily_limit": 2000, "daily_seconds_limit": 500 },
+          { "alias": "agnes-2", "apiKey": { "store": "platform", "key": "agnes.api.2" }, "priority_weight": 90,  "daily_limit": 2000, "daily_seconds_limit": 500 },
+          { "alias": "agnes-3", "apiKey": { "store": "platform", "key": "agnes.api.3" }, "priority_weight": 80,  "daily_limit": 2000, "daily_seconds_limit": 500 },
+          { "alias": "agnes-4", "apiKey": { "store": "platform", "key": "agnes.api.4" }, "priority_weight": 70,  "daily_limit": 2000, "daily_seconds_limit": 500 },
+          { "alias": "agnes-5", "apiKey": { "store": "platform", "key": "agnes.api.5" }, "priority_weight": 60,  "daily_limit": 2000, "daily_seconds_limit": 500 }
         ]
       }
     }

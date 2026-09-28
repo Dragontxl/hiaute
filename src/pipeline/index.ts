@@ -399,12 +399,24 @@ export class Pipeline {
       const MAX_PARALLEL = clampInt(Number(process.env.MAX_PARALLEL_GENERATION ?? 4), 1, 5);
       // 单片段硬失败重试次数（默认 2：最多 3 次尝试），仍失败则跳过该片段、不拖垮整个任务
       const SHOT_RETRIES = clampInt(Number(process.env.MAX_SHOT_RETRIES ?? 2), 0, 5);
+      // 生成阶段墙钟预算（§8.4 兜底）：超时后停止调度新镜头，带着已完成片段进入 COMPOSE，
+      // 避免被外部（CI 超时 / 控制面取消）中途掐断导致整单无 final.mp4。
+      const GENERATE_BUDGET_MS = clampInt(Number(process.env.GENERATE_BUDGET_SECONDS ?? 5400), 60, 6 * 3600) * 1000;
+      const generateStartedAt = Date.now();
       // checkpoint 落盘串行化：并发写同一文件会乱序丢进度
       let commitTail: Promise<void> = Promise.resolve();
       const commit = () => {
         commitTail = commitTail.then(() => ctx.onCheckpoint?.(ctx.checkpoint));
       };
       await runWithConcurrency(llmJobs, MAX_PARALLEL, async ({ index: i, seconds, dest, framePath }) => {
+        // 预算耗尽：不再发起新的生成（在途的会跑完），直接让 COMPOSE 使用已有片段。
+        if (Date.now() - generateStartedAt > GENERATE_BUDGET_MS) {
+          log.warn('generate budget exhausted; skipping remaining shots', {
+            index: i,
+            budgetSeconds: GENERATE_BUDGET_MS / 1000,
+          });
+          return;
+        }
         // 参考帧作为图生视频首帧：优先上传到控制面 R2 拿公开直链（Agnes 图生视频 ti2vid）。
         // 本地/常驻形态 store.put 返回 memory:// 或 file:// 时不上传，直接 fallback 纯文生。
         let imageUrl: string | undefined;

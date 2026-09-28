@@ -178,14 +178,17 @@ export class MemoryAccountLeaseStore implements AccountLeaseStore {
     return { accountId: picked.id, alias: picked.alias, apiType, leasedUntil: s.leasedUntil };
   }
 
-  async release(_apiType: ApiType, accountId: string, _now = Date.now()): Promise<void> {
+  async release(_apiType: ApiType, accountId: string, cooldownMs = 0, now = Date.now()): Promise<void> {
     const s = this.ensure(accountId);
-    s.leasedUntil = null;
+    // 冷却 > 0：账户在 cooldownMs 内不被再次发放（视频 RPM=1 依赖此机制）。
+    // 冷却 = 0：立即归还（如上游全局队列满，账户本身没坏）。
+    s.leasedUntil = cooldownMs > 0 ? now + cooldownMs : null;
   }
 
-  async markFailure(_apiType: ApiType, accountId: string, reason: string, _now = Date.now()): Promise<void> {
+  async markFailure(_apiType: ApiType, accountId: string, reason: string, cooldownMs = 0, now = Date.now()): Promise<void> {
     const s = this.ensure(accountId);
-    s.leasedUntil = null;
+    // 与 release 一致：临时错误也要进入冷却，避免失败后被立刻重选造成请求风暴。
+    s.leasedUntil = cooldownMs > 0 ? now + cooldownMs : null;
     // 只有账户级故障（401/403/鉴权）才累计隔离；429/503/5xx/timeout 是临时错误，不隔离
     if (isAccountFaultError(reason)) {
       s.consecutiveFailures += 1;

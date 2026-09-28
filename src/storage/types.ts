@@ -113,6 +113,12 @@ export interface TaskRepository {
 export interface RateLimitRule {
   windowMs: number;
   max: number;
+  /**
+   * true 表示该上限是「每账户」而非「整池」——
+   * 限流键会带上 accountId（如 `acct:agnes-video-13:agnes-video`）。
+   * 视频模型 RPM=1 属于每账户额度，必须按账户隔离，否则 5 账户共享 30 RPM 会超发。
+   */
+  perAccount?: boolean;
 }
 
 /** 限流结果。 */
@@ -154,9 +160,14 @@ export interface LeaseGrant {
  */
 export interface AccountLeaseStore {
   acquire(apiType: ApiType, candidates: LeaseCandidate[], ttlMs: number, now?: number): Promise<LeaseGrant | null>;
-  /** apiType 显式传入：DO 按 apiType 分片。 */
-  release(apiType: ApiType, accountId: string, now?: number): Promise<void>;
-  markFailure(apiType: ApiType, accountId: string, reason: string, now?: number): Promise<void>;
+  /**
+   * 释放租约。`cooldownMs > 0` 时账户进入冷却，在到期前不会被再次发放
+   * （视频 RPM=1 依赖此冷却；传 0 表示立即归还、不冷却）。
+   * apiType 显式传入：DO 按 apiType 分片。
+   */
+  release(apiType: ApiType, accountId: string, cooldownMs?: number, now?: number): Promise<void>;
+  /** 标记失败；cooldownMs>0 时同时置冷却（429/503 等临时错误也应退避，而非立即重用）。 */
+  markFailure(apiType: ApiType, accountId: string, reason: string, cooldownMs?: number, now?: number): Promise<void>;
   /** 连续失败达阈值后账户被隔离，返回是否仍健康。 */
   markSuccess(apiType: ApiType, accountId: string, now?: number): Promise<void>;
   /** 健康快照（调试用）。 */

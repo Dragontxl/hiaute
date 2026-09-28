@@ -32,6 +32,16 @@ export function isRetryableError(err: unknown): boolean {
 }
 
 /**
+ * 是否「上游全局繁忙」的错误（与具体账户无关，换号也不会有帮助）。
+ * 典型：Agnes 视频 `video_queue_full` —— 服务端队列满，任何账户提交都会被拒。
+ * 对这类错误应「整池短暂退避」，而不是轮换所有账户（那会把每个账户的 RPM 都打光）。
+ */
+export function isPoolBusyError(err: unknown): boolean {
+  const msg = String(err).toLowerCase();
+  return msg.includes('video_queue_full') || msg.includes('queue is full') || msg.includes('queue_full');
+}
+
+/**
  * 是否「账户本身坏了」的错误（应隔离该账户）。
  * 401/403/PERMISSION_DENIED/unauthorized/invalid api key → 账户级故障，隔离；
  * 429/5xx/timeout → 临时错误，账户没坏，只退避重试，不累计隔离计数。
@@ -56,6 +66,8 @@ export interface BackoffOptions {
   maxRounds?: number;
   /** jitter 比例（默认 0.3）。 */
   jitter?: number;
+  /** 上游全局繁忙（queue_full）时的整池退避毫秒（默认 20s）。 */
+  poolBusyMs?: number;
 }
 
 const DEFAULTS: Required<BackoffOptions> = {
@@ -63,6 +75,7 @@ const DEFAULTS: Required<BackoffOptions> = {
   capMs: 300_000,
   maxRounds: 8,
   jitter: 0.3,
+  poolBusyMs: 20_000,
 };
 
 function sleep(ms: number): Promise<void> {
@@ -91,6 +104,9 @@ export async function withAccountFailover<T>(
   while (round <= cfg.maxRounds) {
     // 本轮：尽力尝试所有当前可用账户（相当于“换下一个可用者”）
     let attemptedAny = false;
+    let poolBusyRetries = 0;
+    // queue_full 是全局性的，换号无益：最多原地重试 1 次即转入轮次退避，避免轮换烧光各账户配额。
+    const MAX_POOL_BUSY_RETRIES = 1;
     for (;;) {
       const lease = await pool.acquire(apiType);
       if (!lease) break; // 本轮无可用户 → 进入退避
@@ -105,16 +121,34 @@ export async function withAccountFailover<T>(
           ...(account.modelName ? { modelName: account.modelName } : {}),
         });
         await pool.markSuccess(account.id);
+        // 成功释放也带冷却：视频 RPM=1 要求在窗口内静默该账户。
         await release();
         return result;
       } catch (err) {
         lastError = err;
         if (!isRetryableError(err)) {
-          await release();
+          await release({ cooldownMs: 0 });
           throw err; // 非可重试错误直接抛出
         }
+        if (isPoolBusyError(err)) {
+          // 上游全局队列满：与具体账户无关，换号无用。立即归还该账户（不冷却），
+          // 整池短暂退避后重试；有限次后进入轮次退避，避免死循环。
+          await release({ cooldownMs: 0 });
+          poolBusyRetries += 1;
+          if (poolBusyRetries > MAX_POOL_BUSY_RETRIES) {
+            log.warn('provider busy; deferring to round backoff', { apiType, round });
+            break;
+          }
+          log.warn('provider busy (queue full); pool-level backoff', {
+            apiType,
+            waitMs: cfg.poolBusyMs,
+            err: String(err).slice(0, 200),
+          });
+          await sleep(cfg.poolBusyMs);
+          continue;
+        }
         await pool.markFailure(account.id, String(err));
-        // markFailure 已释放并发计数（租约由后端置冷却）；此处无需再 release
+        // markFailure 已释放并发计数并使账户进入冷却；此处无需再 release
         log.warn('switching to next account', { apiType, failedAlias: account.alias, err: String(err) });
       }
     }
