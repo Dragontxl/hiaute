@@ -387,8 +387,14 @@ export class Pipeline {
         log.info('shot generated (code)', { index: i, seconds, text: text.slice(0, 40), font: fontfile });
         continue;
       }
-      // 抽帧按 analysis.shots 的 index 落盘，这里把生成序号映射回原始分镜序号
-      const framePath = art.framePaths[analysis?.shots[i]?.index ?? -1];
+      // 抽帧按 analysis.shots 的 index 落盘，这里把生成序号映射回原始分镜序号。
+      // 防御：帧文件可能缺失（抽帧对失败镜头是跳过而非中断），缺失则降级为纯文生，
+      // 避免生成阶段 readFile 抛 ENOENT 拖垮整个任务。
+      const rawFrame = art.framePaths[analysis?.shots[i]?.index ?? -1];
+      const framePath = rawFrame && (await fileExists(rawFrame)) ? rawFrame : undefined;
+      if (rawFrame && !framePath) {
+        log.warn('frame missing; fall back to text-to-video', { index: i, framePath: rawFrame });
+      }
       llmJobs.push({ index: i, seconds, dest, ...(framePath ? { framePath } : {}) });
     }
 
@@ -421,15 +427,25 @@ export class Pipeline {
         // 本地/常驻形态 store.put 返回 memory:// 或 file:// 时不上传，直接 fallback 纯文生。
         let imageUrl: string | undefined;
         if (framePath) {
-          const remote = await ctx.store.put(
-            `tasks/${ctx.taskId}/frames/shot-${pad(i)}.jpg`,
-            await readFile(framePath),
-            'image/jpeg',
-          );
-          imageUrl = /^https?:\/\//i.test(remote) ? remote : undefined;
-          if (!imageUrl) {
-            // GHA 内 FS store 返回 file://，改用 callback/artifact 上传到控制面 R2 拿直链
-            imageUrl = (await uploadFrameToR2(framePath, i)) ?? undefined;
+          try {
+            const remote = await ctx.store.put(
+              `tasks/${ctx.taskId}/frames/shot-${pad(i)}.jpg`,
+              await readFile(framePath),
+              'image/jpeg',
+            );
+            imageUrl = /^https?:\/\//i.test(remote) ? remote : undefined;
+            if (!imageUrl) {
+              // GHA 内 FS store 返回 file://，改用 callback/artifact 上传到控制面 R2 拿直链
+              imageUrl = (await uploadFrameToR2(framePath, i)) ?? undefined;
+            }
+          } catch (err) {
+            // 帧上传失败不影响该镜生成（降级纯文生），不抛未捕获异常
+            log.warn('frame upload failed; fall back to text-to-video', {
+              index: i,
+              framePath,
+              err: String(err).slice(0, 200),
+            });
+            imageUrl = undefined;
           }
         }
 
