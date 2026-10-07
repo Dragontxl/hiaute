@@ -7,8 +7,6 @@
       "use": "@hypitapp/provider-gemini",
       "config": {
         "modelName": "gemini-3.5-flash",
-        // 只有一个可用 key（备份 key 无效，已移除）；cooldown 收紧到 20s，
-        // 配合 provider 侧更长轮次的重试，503 瞬时高峰时能有多次机会等到恢复。
         "cooldown_seconds": 20,
         "accounts": [
           { "alias": "gemini-main",   "apiKey": { "store": "platform", "key": "gemini.api.1" }, "priority_weight": 100, "daily_limit": 1500, "max_concurrent": 1 }
