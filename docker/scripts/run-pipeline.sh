@@ -173,7 +173,14 @@ set -e
 
 if [[ "$RC" -ne 0 ]]; then
   echo "ERROR: pipeline exited with code $RC" >&2
-  send_callback_status "FAILED" || true
+  # 退出码 75 = 可重试失败（上游资源不可用，如 Gemini 503 / Agnes 队列满 / 无可用账号）：
+  # 标 PAUSED，控制面重试端点可稍后重新派发，而不是判 FAILED。
+  if [[ "$RC" -eq 75 ]]; then
+    echo "retryable failure; marking task PAUSED (可稍后重试)" >&2
+    send_callback_status "PAUSED" || true
+  else
+    send_callback_status "FAILED" || true
+  fi
   exit "$RC"
 fi
 

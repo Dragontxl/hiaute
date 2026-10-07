@@ -80,7 +80,8 @@ export class GeminiProvider implements Provider {
     prompt: string;
     model?: string;
   }): Promise<VideoAnalysis> {
-    // Gemini 免费层每天仅 ~20 次：收紧重试（4 轮、15s 起），避免 503 过载时空转烧额度
+    // Gemini 503 是"瞬时高峰"，不是账户故障：放宽到 8 轮、8s 起步，让它在高峰消退前有多次机会；
+    // 配合账户 cooldown_seconds=20s，失败后很快即可重试（免费层 15 RPM 不会被打爆）。
     return withAccountFailover(
       this.pool,
       'gemini',
@@ -126,7 +127,7 @@ export class GeminiProvider implements Provider {
         log.info('gemini analysis ok', { model, shots: parsed.shots.length });
         return parsed;
       },
-      { maxRounds: 4, baseMs: 15_000, capMs: 120_000 },
+      { maxRounds: 8, baseMs: 8_000, capMs: 180_000 },
     );
   }
 }

@@ -177,7 +177,16 @@ async function main(): Promise<void> {
 const isDirect = /[/\\](src|dist)[/\\]index\.(ts|js)$/.test(process.argv[1] ?? '');
 if (isDirect) {
   main().catch((err) => {
-    log.error('fatal', { err: String(err) });
+    const msg = String(err);
+    // 资源不可用类错误（上游瞬时限流/队列满/无可用账号）应标记为可重试（PAUSED），
+    // 而不是直接 FAILED：控制面重试端点可稍后重新派发（见 /api/v1/tasks/:id）。
+    const retryable = /(RetryExhaustedError|no available [a-z-]+ account|video_queue_full|high demand|HTTP 429|HTTP 503)/i.test(msg);
+    if (retryable) {
+      log.warn('fatal (retryable): pipeline will be marked PAUSED', { err: msg.slice(0, 300) });
+      process.exitCode = 75; // 约定：75 = 可重试失败（run-pipeline.sh 发 PAUSED 回调）
+      return;
+    }
+    log.error('fatal', { err: msg });
     process.exitCode = 1;
   });
 }
